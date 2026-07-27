@@ -1,0 +1,6 @@
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\AshikaWdm.csproj.AssemblyReference.cache
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\AshikaWdm.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\AshikaWdm.AssemblyInfoInputs.cache
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\AshikaWdm.AssemblyInfo.cs
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\AshikaWdm.csproj.CoreCompileInputs.cache
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\AshikaWdm.MvcApplicationPartsAssemblyInfo.cache
