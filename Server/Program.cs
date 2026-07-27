@@ -100,6 +100,7 @@ if (!string.IsNullOrEmpty(corsOrigin)) app.UseCors();
 app.UseRateLimiter();
 
 /* --------------------------------------- bearer token → CurrentUser */
+/* --------------------------------------- bearer token → CurrentUser */
 app.Use(async (ctx, next) =>
 {
     var path = ctx.Request.Path.Value ?? "";
@@ -115,12 +116,19 @@ app.Use(async (ctx, next) =>
             ?? throw AppException.Unauthorised("Your session has expired");
 
         var db = ctx.RequestServices.GetRequiredService<Db>();
-        ctx.Items["user"] = await Scope.Load(db, userId);
+
+        try
+        {
+            ctx.Items["user"] = await Scope.Load(db, userId);
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogError(ex, "Failed to load user scope for ID {UserId}", userId);
+            throw AppException.Unauthorised("Unable to resolve user session permissions");
+        }
     }
     await next();
 });
-
-/* ------------------------------------------------------------- routes */
 var db = app.Services.GetRequiredService<Db>();
 
 app.MapGet("/api/health", async () =>

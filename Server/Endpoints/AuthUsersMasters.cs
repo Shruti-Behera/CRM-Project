@@ -44,16 +44,25 @@ public static class AuthEndpoints
         }).RequireRateLimiting("login");
 
         app.MapGet("/api/auth/me", (HttpContext ctx) =>
-        {
-            var u = (CurrentUser)ctx.Items["user"]!;
-            return Results.Json(new
-            {
-                id = u.Id, name = u.Name, email = u.Email,
-                level = u.Level, scope = u.ScopeKind,
-                department = u.Department, division = u.Division,
-                permissions = u.Permissions.ToArray()
-            });
-        });
+  {
+      // If the token isn't valid or user isn't attached to HttpContext, return 401 instead of crashing with a 500
+      if (ctx.Items["user"] is not CurrentUser u)
+      {
+          return Results.Unauthorized();
+      }
+
+      return Results.Json(new
+      {
+          id = u.Id,
+          name = u.Name,
+          email = u.Email,
+          level = u.Level,
+          scope = u.ScopeKind,
+          department = u.Department ?? "",
+          division = u.Division ?? "",
+          permissions = u.Permissions?.ToArray() ?? Array.Empty<string>()
+      });
+  });
 
         app.MapPost("/api/auth/change-password", async (HttpContext ctx, Db db, B body) =>
         {
@@ -111,11 +120,17 @@ public static class UserEndpoints
                 RETURNING id
                 """, new
             {
-                code = b.Str("employee_code"), name = b.Str("name"), email = b.Str("email"),
-                mobile = b.OptStr("mobile"), hash = Passwords.Hash(password),
-                dept = b.OptInt("department_id"), div = b.OptInt("division_id"),
-                desig = b.OptStr("designation"), mgr = b.OptInt("manager_id"),
-                role = b.Int("role_id"), cap = b.Dec("weekly_capacity_hours", 40),
+                code = b.Str("employee_code"),
+                name = b.Str("name"),
+                email = b.Str("email"),
+                mobile = b.OptStr("mobile"),
+                hash = Passwords.Hash(password),
+                dept = b.OptInt("department_id"),
+                div = b.OptInt("division_id"),
+                desig = b.OptStr("designation"),
+                mgr = b.OptInt("manager_id"),
+                role = b.Int("role_id"),
+                cap = b.Dec("weekly_capacity_hours", 40),
                 status = b.Choice("status", ["Active", "Inactive"], "Active")
             });
 

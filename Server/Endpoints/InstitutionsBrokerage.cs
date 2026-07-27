@@ -137,14 +137,20 @@ public static class InstitutionEndpoints
                     RETURNING id
                     """, new
                 {
-                    reference, name = b.Str("name"), houseCode,
+                    reference,
+                    name = b.Str("name"),
+                    houseCode,
                     instType = b.Str("inst_type"),
                     tier = b.Choice("tier", ["A", "B", "C"], "C"),
                     empanelment = b.OptStr("empanelment") ?? "In process",
-                    rm = b.Int("rm_id"), country = b.OptInt("country_id"),
-                    city = b.OptStr("city"), aum = b.Dec("aum_cr"),
-                    contactName = b.OptStr("contact_name"), contactRole = b.OptStr("contact_role"),
-                    contactEmail = b.OptStr("contact_email"), note = b.OptStr("note")
+                    rm = b.Int("rm_id"),
+                    country = b.OptInt("country_id"),
+                    city = b.OptStr("city"),
+                    aum = b.Dec("aum_cr"),
+                    contactName = b.OptStr("contact_name"),
+                    contactRole = b.OptStr("contact_role"),
+                    contactEmail = b.OptStr("contact_email"),
+                    note = b.OptStr("note")
                 }, tx);
 
                 foreach (var sc in schemes)
@@ -178,12 +184,19 @@ public static class InstitutionEndpoints
                      WHERE id = @id
                     """, new
                 {
-                    id, name = b.Str("name"), houseCode, instType = b.Str("inst_type"),
+                    id,
+                    name = b.Str("name"),
+                    houseCode,
+                    instType = b.Str("inst_type"),
                     tier = b.Choice("tier", ["A", "B", "C"], "C"),
                     empanelment = b.OptStr("empanelment") ?? "In process",
-                    rm = b.Int("rm_id"), country = b.OptInt("country_id"), city = b.OptStr("city"),
-                    aum = b.Dec("aum_cr"), contactName = b.OptStr("contact_name"),
-                    contactRole = b.OptStr("contact_role"), contactEmail = b.OptStr("contact_email"),
+                    rm = b.Int("rm_id"),
+                    country = b.OptInt("country_id"),
+                    city = b.OptStr("city"),
+                    aum = b.Dec("aum_cr"),
+                    contactName = b.OptStr("contact_name"),
+                    contactRole = b.OptStr("contact_role"),
+                    contactEmail = b.OptStr("contact_email"),
                     note = b.OptStr("note")
                 }, tx);
 
@@ -202,14 +215,26 @@ public static class InstitutionEndpoints
                         await conn.ExecuteAsync("""
                             UPDATE institution_schemes SET name = @name, client_code = @code,
                                    custodian = @custodian, status = @status WHERE id = @sid
-                            """, new { name = sc.Name, code = sc.Code, custodian = sc.Custodian,
-                                       status = sc.Status, sid = sc.Id }, tx);
+                            """, new
+                        {
+                            name = sc.Name,
+                            code = sc.Code,
+                            custodian = sc.Custodian,
+                            status = sc.Status,
+                            sid = sc.Id
+                        }, tx);
                     else
                         await conn.ExecuteAsync("""
                             INSERT INTO institution_schemes (institution_id, name, client_code, custodian, status)
                             VALUES (@id, @name, @code, @custodian, @status)
-                            """, new { id, name = sc.Name, code = sc.Code, custodian = sc.Custodian,
-                                       status = sc.Status }, tx);
+                            """, new
+                        {
+                            id,
+                            name = sc.Name,
+                            code = sc.Code,
+                            custodian = sc.Custodian,
+                            status = sc.Status
+                        }, tx);
                 }
                 return 0;
             });
@@ -260,9 +285,14 @@ public static class InstitutionEndpoints
                     RETURNING id
                     """, new
                 {
-                    id, date = b.Str("visit_date"), type = b.Str("visit_type"), me = u.Id,
-                    person = b.OptStr("met_person"), city = b.OptStr("city"),
-                    agenda = b.OptStr("agenda"), outcome = b.OptStr("outcome"),
+                    id,
+                    date = b.Str("visit_date"),
+                    type = b.Str("visit_type"),
+                    me = u.Id,
+                    person = b.OptStr("met_person"),
+                    city = b.OptStr("city"),
+                    agenda = b.OptStr("agenda"),
+                    outcome = b.OptStr("outcome"),
                     interest = b.Choice("interest", ["High", "Medium", "Low"], "Medium"),
                     followUp = b.OptStr("follow_up_on"),
                     source = b.Choice("source", ["typed", "voice", "import"], "typed"),
@@ -350,32 +380,41 @@ public static class BrokerageEndpoints
         });
 
         app.MapPost("/api/brokerage", async (HttpContext ctx, Db db, B b) =>
-        {
-            var u = (CurrentUser)ctx.Items["user"]!;
-            u.Require("institutional.create");
-            var target = await ResolveTarget(db, b)
-                ?? throw AppException.BadRequest("No client matched — send an institution_id or a known client code");
-            var month = Month(b)
-                ?? throw AppException.BadRequest("A trade date or a period month is needed");
+ {
+     var u = (CurrentUser)ctx.Items["user"]!;
+     u.Require("institutional.create");
 
-            await db.Exec("""
-                INSERT INTO brokerage
-                  (institution_id, scheme_id, client_code, trade_date, period_month, segment,
-                   turnover, brokerage, source, created_by)
-                VALUES (@inst, @scheme, @code, CAST(@date AS date), @month, @segment,
-                        @turnover, @amount, 'manual', @me)
-                """, new
-            {
-                inst = target.Value.InstitutionId, scheme = target.Value.SchemeId,
-                code = target.Value.Code, date = b.OptStr("trade_date"), month,
-                segment = b.Choice("segment", ["Cash", "F&O", "Block / Bulk"], "Cash"),
-                turnover = b.Dec("turnover"), amount = b.Dec("brokerage"), me = u.Id
-            });
+     var target = await ResolveTarget(db, b)
+         ?? throw AppException.BadRequest("No client matched — send an institution_id or a known client code");
 
-            await Audit.LogActivity(db, ctx, "institution", target.Value.InstitutionId,
-                "brokerage_booked", $"{b.OptStr("segment") ?? "Cash"} {b.Dec("brokerage")}");
-            return Results.Json(new { ok = true }, statusCode: 201);
-        });
+     var month = Month(b)
+         ?? throw AppException.BadRequest("A trade date or a period month is needed");
+
+     var (instId, schemeId, code) = target;
+     await db.Exec("""
+        INSERT INTO brokerage
+          (institution_id, scheme_id, client_code, trade_date, period_month, segment,
+           turnover, brokerage, source, created_by)
+        VALUES (@inst, @scheme, @code, CAST(@date AS date), @month, @segment,
+                @turnover, @amount, 'manual', @me)
+        """, new
+     {
+         inst = instId,
+         scheme = schemeId,
+         code = code,
+         date = b.OptStr("trade_date"),
+         month,
+         segment = b.Choice("segment", ["Cash", "F&O", "Block / Bulk"], "Cash"),
+         turnover = b.Dec("turnover"),
+         amount = b.Dec("brokerage"),
+         me = u.Id
+     });
+
+     await Audit.LogActivity(db, ctx, "institution", instId,
+         "brokerage_booked", $"{b.OptStr("segment") ?? "Cash"} {b.Dec("brokerage")}");
+
+     return Results.Json(new { ok = true }, statusCode: 201);
+ });
 
         /* POST /api/brokerage/import — takes parsed rows and reports what it
            did rather than failing the lot: duplicates are skipped on the
@@ -403,22 +442,25 @@ public static class BrokerageEndpoints
                     var month = Month(row);
                     if (month is null) { skipped++; continue; }
 
-                    /* In PostgreSQL a failed statement poisons the whole
-                       transaction, so duplicates are avoided with ON CONFLICT
-                       rather than caught afterwards. */
+                    var (instId, schemeId, code) = target.Value;
                     var affected = await conn.ExecuteAsync($"""
-                        INSERT INTO brokerage
-                          (institution_id, scheme_id, client_code, trade_date, period_month, segment,
-                           turnover, brokerage, source, created_by)
-                        VALUES (@inst, @scheme, @code, CAST(@date AS date), @month, @segment,
-                                @turnover, @amount, 'import', @me)
-                        {(skipDuplicates ? "ON CONFLICT DO NOTHING" : "")}
-                        """, new
+                INSERT INTO brokerage
+                  (institution_id, scheme_id, client_code, trade_date, period_month, segment,
+                   turnover, brokerage, source, created_by)
+                VALUES (@inst, @scheme, @code, CAST(@date AS date), @month, @segment,
+                        @turnover, @amount, 'import', @me)
+                {(skipDuplicates ? "ON CONFLICT DO NOTHING" : "")}
+                """, new
                     {
-                        inst = target.Value.InstitutionId, scheme = target.Value.SchemeId,
-                        code = target.Value.Code, date = row.OptStr("trade_date"), month,
+                        inst = instId,
+                        scheme = schemeId,
+                        code = code,
+                        date = row.OptStr("trade_date"),
+                        month,
                         segment = row.Choice("segment", ["Cash", "F&O", "Block / Bulk"], "Cash"),
-                        turnover = row.Dec("turnover"), amount = row.Dec("brokerage"), me = u.Id
+                        turnover = row.Dec("turnover"),
+                        amount = row.Dec("brokerage"),
+                        me = u.Id
                     }, tx);
                     if (affected > 0) imported++; else skipped++;
                 }

@@ -227,16 +227,20 @@ public static class Scope
 
         /* The role's defaults with any per-user override applied on top —
            the same rule the prototype used. */
+        /* The role's defaults with any per-user override applied on top —
+             the same rule the prototype used. */
+        /* The role's defaults with any per-user override applied on top —
+     the same rule the prototype used. */
         var perms = await db.Q("""
-            SELECT p.slug, COALESCE(up.granted, 1) AS granted
-              FROM permissions p
-              LEFT JOIN role_permissions rp
-                     ON rp.permission_id = p.id
-                    AND rp.role_id = (SELECT role_id FROM users WHERE id = @userId)
-              LEFT JOIN user_permissions up
-                     ON up.permission_id = p.id AND up.user_id = @userId
-             WHERE rp.permission_id IS NOT NULL OR up.user_id IS NOT NULL
-            """, new { userId });
+    SELECT p.slug, COALESCE(up.granted::integer, 1) AS granted
+      FROM permissions p
+      LEFT JOIN role_permissions rp
+             ON rp.permission_id = p.id
+            AND rp.role_id = (SELECT role_id FROM users WHERE id = @userId)
+      LEFT JOIN user_permissions up
+             ON up.permission_id = p.id AND up.user_id = @userId
+     WHERE rp.permission_id IS NOT NULL OR up.user_id IS NOT NULL
+    """, new { userId });
 
         var user = new CurrentUser
         {
@@ -319,9 +323,13 @@ public static class Audit
             """,
             new
             {
-                entityType, entityId,
+                entityType,
+                entityId,
                 userId = (ctx.Items["user"] as CurrentUser)?.Id,
-                action, description, oldV, newV,
+                action,
+                description,
+                oldV,
+                newV,
                 ip = ctx.Connection.RemoteIpAddress?.ToString()
             });
 
