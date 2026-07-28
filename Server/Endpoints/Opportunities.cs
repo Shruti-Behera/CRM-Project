@@ -20,7 +20,8 @@ public static class OpportunityEndpoints
 
     private static string ListSql(string where) => $"""
         SELECT o.id, o.opportunity_no, o.stage, o.txn_size_cr, o.expected_fee_l, o.probability_pct,
-               o.weighted_fee_l, o.expected_close, o.next_action, o.next_action_due, o.is_converted,
+               o.weighted_fee_l, o.expected_close, o.next_action, o.next_action_due,
+               o.is_converted::integer AS is_converted,
                a.name AS account, a.account_code, dt.name AS deal_type, dv.name AS division,
                u.id AS owner_id, u.name AS owner,
                (CURRENT_DATE - o.created_at::date) AS age_days,
@@ -55,7 +56,7 @@ public static class OpportunityEndpoints
 
             var qs = ctx.Request.Query;
             if (qs["open"] == "1")
-                where.Add($"o.is_converted = 0 AND o.stage IN ('{string.Join("','", Open)}')");
+                where.Add($"o.is_converted::integer = 0 AND o.stage IN ('{string.Join("','", Open)}')");
             if (!string.IsNullOrEmpty(qs["stage"])) { where.Add("o.stage = @stage"); p.Add("stage", (string)qs["stage"]!); }
             if (!string.IsNullOrEmpty(qs["division"])) { where.Add("o.division_id = @div"); p.Add("div", int.Parse(qs["division"]!)); }
             if (!string.IsNullOrEmpty(qs["owner"])) { where.Add("o.owner_id = @owner"); p.Add("owner", int.Parse(qs["owner"]!)); }
@@ -76,7 +77,7 @@ public static class OpportunityEndpoints
             var u = (CurrentUser)ctx.Items["user"]!;
             u.Require("opportunities.view");
             var s = Scope.Banking(u);
-            var rows = (await db.Q(ListSql($"{s.Sql} AND o.is_converted = 0"),
+            var rows = (await db.Q(ListSql($"{s.Sql} AND o.is_converted::integer = 0"),
                 new { people = s.People, divId = s.DivisionId, uid = s.UserId })).ToList();
 
             var board = new Dictionary<string, object>();

@@ -198,7 +198,7 @@ public sealed class CurrentUser
 }
 
 /* A WHERE fragment plus the parameters it needs, merged into the query's own. */
-public sealed record ScopeSql(string Sql, int[]? People, int? DivisionId, int? DepartmentId, int UserId);
+public sealed record ScopeSql(string Sql, int[] People, int? DivisionId, int? DepartmentId, int UserId);
 
 /// <summary>
 /// Who a person can see, expressed once so every list obeys the same rule.
@@ -226,21 +226,19 @@ public static class Scope
         if ((string)u.status != "Active") throw AppException.Forbidden("This account is inactive");
 
         /* The role's defaults with any per-user override applied on top —
-           the same rule the prototype used. */
-        /* The role's defaults with any per-user override applied on top —
-             the same rule the prototype used. */
-        /* The role's defaults with any per-user override applied on top —
-     the same rule the prototype used. */
+           the same rule the prototype used. The ::integer cast on up.granted
+           keeps this correct whether the column is stored as smallint or as a
+           real boolean, so COALESCE never trips PostgreSQL's strict typing. */
         var perms = await db.Q("""
-    SELECT p.slug, COALESCE(up.granted::integer, 1) AS granted
-      FROM permissions p
-      LEFT JOIN role_permissions rp
-             ON rp.permission_id = p.id
-            AND rp.role_id = (SELECT role_id FROM users WHERE id = @userId)
-      LEFT JOIN user_permissions up
-             ON up.permission_id = p.id AND up.user_id = @userId
-     WHERE rp.permission_id IS NOT NULL OR up.user_id IS NOT NULL
-    """, new { userId });
+            SELECT p.slug, COALESCE(up.granted::integer, 1) AS granted
+              FROM permissions p
+              LEFT JOIN role_permissions rp
+                     ON rp.permission_id = p.id
+                    AND rp.role_id = (SELECT role_id FROM users WHERE id = @userId)
+              LEFT JOIN user_permissions up
+                     ON up.permission_id = p.id AND up.user_id = @userId
+             WHERE rp.permission_id IS NOT NULL OR up.user_id IS NOT NULL
+            """, new { userId });
 
         var user = new CurrentUser
         {
@@ -273,41 +271,45 @@ public static class Scope
         return user;
     }
 
+    /* Npgsql cannot bind a null array, so @people is always handed a concrete
+       int[] — empty when the scope does not read it. The empty array changes
+       nothing: '= ANY('{}')' is simply never true, and the 'all'/'own' branches
+       do not reference @people at all. */
     public static ScopeSql Banking(CurrentUser u, string alias = "o") => u.ScopeKind switch
     {
-        "all" => new("1=1", null, null, null, u.Id),
+        "all" => new("1=1", Array.Empty<int>(), null, null, u.Id),
         "team" => new($"""
             ({alias}.owner_id = ANY(@people)
               OR (CAST(@divId AS int) IS NOT NULL AND {alias}.division_id = @divId)
               OR EXISTS (SELECT 1 FROM opportunity_team ot
                           WHERE ot.opportunity_id = {alias}.id AND ot.user_id = ANY(@people)))
-            """, u.People, u.DivisionId, null, u.Id),
+            """, u.People ?? Array.Empty<int>(), u.DivisionId, null, u.Id),
         _ => new($"""
             ({alias}.owner_id = @uid
               OR EXISTS (SELECT 1 FROM opportunity_team ot
                           WHERE ot.opportunity_id = {alias}.id AND ot.user_id = @uid))
-            """, null, null, null, u.Id)
+            """, Array.Empty<int>(), null, null, u.Id)
     };
 
     public static ScopeSql Institution(CurrentUser u, string alias = "i") => u.ScopeKind switch
     {
-        "all" => new("1=1", null, null, null, u.Id),
-        "team" => new($"{alias}.rm_id = ANY(@people)", u.People, null, null, u.Id),
-        _ => new($"{alias}.rm_id = @uid", null, null, null, u.Id)
+        "all" => new("1=1", Array.Empty<int>(), null, null, u.Id),
+        "team" => new($"{alias}.rm_id = ANY(@people)", u.People ?? Array.Empty<int>(), null, null, u.Id),
+        _ => new($"{alias}.rm_id = @uid", Array.Empty<int>(), null, null, u.Id)
     };
 
     public static ScopeSql Assignment(CurrentUser u, string alias = "a") => u.ScopeKind switch
     {
-        "all" => new("1=1", null, null, null, u.Id),
+        "all" => new("1=1", Array.Empty<int>(), null, null, u.Id),
         "team" => new($"""
             ({alias}.assigned_to = ANY(@people) OR {alias}.assigned_by = ANY(@people)
               OR {alias}.department_id = @deptId)
-            """, u.People, null, u.DepartmentId, u.Id),
+            """, u.People ?? Array.Empty<int>(), null, u.DepartmentId, u.Id),
         _ => new($"""
             ({alias}.assigned_to = @uid OR {alias}.assigned_by = @uid
               OR EXISTS (SELECT 1 FROM assignment_watchers w
                           WHERE w.assignment_id = {alias}.id AND w.user_id = @uid))
-            """, null, null, null, u.Id)
+            """, Array.Empty<int>(), null, null, u.Id)
     };
 }
 

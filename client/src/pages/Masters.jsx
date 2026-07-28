@@ -16,7 +16,7 @@ export default function Masters() {
   const [name, setName] = useState('');
 
   const load = () => { setRows(null); get(`/masters/${tab}`).then(setRows).catch(e => setErr(e.message)); };
-  useEffect(load, [tab]);
+  useEffect(() => { load(); }, [tab]);
 
   const add = async () => {
     if (!name.trim()) return;

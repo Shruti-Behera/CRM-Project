@@ -138,6 +138,16 @@ public static class AssignmentEndpoints
                   JOIN users u ON u.id = w.user_id
                  WHERE w.assignment_id = @id
                 """, new { id });
+            row.checklist = await db.Q("""
+                SELECT id, item_text, is_done, sort_order FROM assignment_checklist
+                 WHERE assignment_id = @id ORDER BY sort_order, id
+                """, new { id });
+            row.activity = await db.Q("""
+                SELECT a.action, a.description, a.created_at, u.name AS who
+                  FROM activity_logs a LEFT JOIN users u ON u.id = a.user_id
+                 WHERE a.entity_type = 'assignment' AND a.entity_id = @id
+                 ORDER BY a.created_at DESC LIMIT 100
+                """, new { id });
             return Results.Json((object)row);
         });
 
@@ -235,10 +245,207 @@ public static class AssignmentEndpoints
                 VALUES (@id, @uid, CAST(@logDate AS date), @hours, @narration)
                 """, new { id, uid, logDate, hours, narration = b.OptStr("narration") });
 
+            await Audit.LogActivity(db, ctx, "assignment", id, "time_logged", $"{hours}h logged");
+
             /* the trigger has already updated it */
             var actual = await db.Scalar<decimal>(
                 "SELECT actual_hours FROM assignments WHERE id = @id", new { id });
             return Results.Json(new { actual_hours = actual }, statusCode: 201);
+        });
+
+        /* PATCH /api/assignments/{id} — status, priority, progress, dates. When
+           status becomes Completed we also snap progress to 100 and stamp
+           completed_at; the front end's "Mark complete" uses status=Completed. */
+        app.MapPatch("/api/assignments/{id:int}", async (HttpContext ctx, Db db, int id, B b) =>
+        {
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("assignments.edit");
+
+            var row = await db.One(
+                "SELECT status, progress_pct FROM assignments WHERE id = @id AND deleted_at IS NULL",
+                new { id }) ?? throw AppException.NotFound();
+
+            var sets = new List<string>();
+            var p = new DynamicParameters();
+            p.Add("id", id);
+
+            var status = b.OptStr("status");
+            if (status is not null)
+            {
+                if (!new[] { "Pending", "In Progress", "Under Review", "Completed", "On Hold" }.Contains(status))
+                    throw AppException.BadRequest("Unknown status");
+                sets.Add("status = @status"); p.Add("status", status);
+                if (status == "Completed")
+                {
+                    sets.Add("progress_pct = 100");
+                    sets.Add("completed_at = COALESCE(completed_at, NOW())");
+                }
+            }
+            if (b.OptStr("priority") is { } prio)
+            {
+                if (!new[] { "Low", "Medium", "High", "Critical" }.Contains(prio))
+                    throw AppException.BadRequest("Unknown priority");
+                sets.Add("priority = @priority"); p.Add("priority", prio);
+            }
+            if (b.OptInt("progress_pct") is { } prog && status != "Completed")
+            {
+                sets.Add("progress_pct = @progress"); p.Add("progress", Math.Clamp(prog, 0, 100));
+            }
+            if (b.OptStr("due_date") is { } due)
+            {
+                sets.Add("due_date = CAST(@due AS date)"); p.Add("due", due);
+            }
+            if (sets.Count == 0) throw AppException.BadRequest("Nothing to change");
+
+            await db.Exec($"UPDATE assignments SET {string.Join(", ", sets)} WHERE id = @id", p);
+            await Audit.LogActivity(db, ctx, "assignment", id, "updated",
+                status is not null ? $"Status changed to {status}" : "Assignment updated",
+                (string?)row.status, status);
+            return Results.Json(new { ok = true });
+        });
+
+        /* POST /api/assignments/{id}/complete — mark done and close out its
+           sub-tasks and checklist, matching the prototype's "Mark complete". */
+        app.MapPost("/api/assignments/{id:int}/complete", async (HttpContext ctx, Db db, int id) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
+            await db.Tx<int>(async (conn, tx) =>
+            {
+                await conn.ExecuteAsync("""
+                    UPDATE assignments
+                       SET status = 'Completed', progress_pct = 100, completed_at = COALESCE(completed_at, NOW())
+                     WHERE id = @id
+                    """, new { id }, tx);
+                await conn.ExecuteAsync(
+                    "UPDATE assignment_subtasks SET is_done = 1, done_at = NOW() WHERE assignment_id = @id", new { id }, tx);
+                await conn.ExecuteAsync(
+                    "UPDATE assignment_checklist SET is_done = 1, done_at = NOW() WHERE assignment_id = @id", new { id }, tx);
+                return 0;
+            });
+            await Audit.LogActivity(db, ctx, "assignment", id, "completed", "Marked complete");
+            return Results.Json(new { ok = true });
+        });
+
+        /* DELETE /api/assignments/{id} — soft delete so scope filters hide it. */
+        app.MapDelete("/api/assignments/{id:int}", async (HttpContext ctx, Db db, int id) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("assignments.delete");
+            var n = await db.Exec(
+                "UPDATE assignments SET deleted_at = NOW() WHERE id = @id AND deleted_at IS NULL", new { id });
+            if (n == 0) throw AppException.NotFound();
+            await Audit.LogActivity(db, ctx, "assignment", id, "deleted", "Assignment deleted");
+            return Results.Json(new { ok = true });
+        });
+
+        /* ---- notes / comments ---- */
+        app.MapPost("/api/assignments/{id:int}/notes", async (HttpContext ctx, Db db, int id, B b) =>
+        {
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("assignments.view");
+            var comment = b.Str("comment");
+            var status = b.OptStr("status");
+
+            await db.Exec("""
+                INSERT INTO assignment_notes (assignment_id, user_id, note_at, comment, status_at_note)
+                VALUES (@id, @me, NOW(), @comment, @status)
+                """, new { id, me = u.Id, comment, status });
+
+            if (status is not null)
+            {
+                u.Require("assignments.edit");
+                await db.Exec("UPDATE assignments SET status = @status WHERE id = @id", new { status, id });
+                await Audit.LogActivity(db, ctx, "assignment", id, "status", $"Status changed to {status}");
+            }
+            await Audit.LogActivity(db, ctx, "assignment", id, "note_added", "Note added");
+            return Results.Json(new { ok = true }, statusCode: 201);
+        });
+
+        /* ---- sub-tasks: progress recalculates from them automatically ---- */
+        async Task Reprogress(Db db, int id)
+        {
+            await db.Exec("""
+                UPDATE assignments a SET progress_pct = sub.pct
+                  FROM (SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE is_done = 1)
+                                     / NULLIF(COUNT(*), 0))::int AS pct
+                          FROM assignment_subtasks WHERE assignment_id = @id) sub
+                 WHERE a.id = @id AND a.status <> 'Completed' AND sub.pct IS NOT NULL
+                """, new { id });
+        }
+
+        app.MapPost("/api/assignments/{id:int}/subtasks", async (HttpContext ctx, Db db, int id, B b) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
+            var sid = await db.Scalar<long>("""
+                INSERT INTO assignment_subtasks (assignment_id, title, owner_id, sort_order)
+                VALUES (@id, @title, @owner,
+                        COALESCE((SELECT MAX(sort_order) + 1 FROM assignment_subtasks WHERE assignment_id = @id), 1))
+                RETURNING id
+                """, new { id, title = b.Str("title"), owner = b.OptInt("owner_id") });
+            await Reprogress(db, id);
+            await Audit.LogActivity(db, ctx, "assignment", id, "subtask_added", $"Sub-task added: {b.Str("title")}");
+            return Results.Json(new { id = sid }, statusCode: 201);
+        });
+
+        app.MapPatch("/api/assignments/{id:int}/subtasks/{sid:long}", async (HttpContext ctx, Db db, int id, long sid, B b) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
+            var done = b.Bool("is_done") ? 1 : 0;
+            var n = await db.Exec("""
+                UPDATE assignment_subtasks SET is_done = @done,
+                       done_at = CASE WHEN @done = 1 THEN NOW() ELSE NULL END
+                 WHERE id = @sid AND assignment_id = @id
+                """, new { done, sid, id });
+            if (n == 0) throw AppException.NotFound();
+            await Reprogress(db, id);
+            await Audit.LogActivity(db, ctx, "assignment", id, "subtask",
+                done == 1 ? "Sub-task completed" : "Sub-task reopened");
+            return Results.Json(new { ok = true });
+        });
+
+        app.MapDelete("/api/assignments/{id:int}/subtasks/{sid:long}", async (HttpContext ctx, Db db, int id, long sid) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
+            await db.Exec("DELETE FROM assignment_subtasks WHERE id = @sid AND assignment_id = @id", new { sid, id });
+            await Reprogress(db, id);
+            await Audit.LogActivity(db, ctx, "assignment", id, "subtask_removed", "Sub-task removed");
+            return Results.Json(new { ok = true });
+        });
+
+        /* ---- checklist ---- */
+        app.MapPost("/api/assignments/{id:int}/checklist", async (HttpContext ctx, Db db, int id, B b) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
+            var cid = await db.Scalar<long>("""
+                INSERT INTO assignment_checklist (assignment_id, item_text, sort_order)
+                VALUES (@id, @text,
+                        COALESCE((SELECT MAX(sort_order) + 1 FROM assignment_checklist WHERE assignment_id = @id), 1))
+                RETURNING id
+                """, new { id, text = b.Str("item_text") });
+            await Audit.LogActivity(db, ctx, "assignment", id, "checklist_added", "Checklist item added");
+            return Results.Json(new { id = cid }, statusCode: 201);
+        });
+
+        app.MapPatch("/api/assignments/{id:int}/checklist/{cid:long}", async (HttpContext ctx, Db db, int id, long cid, B b) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
+            var done = b.Bool("is_done") ? 1 : 0;
+            var n = await db.Exec("""
+                UPDATE assignment_checklist SET is_done = @done,
+                       done_at = CASE WHEN @done = 1 THEN NOW() ELSE NULL END
+                 WHERE id = @cid AND assignment_id = @id
+                """, new { done, cid, id });
+            if (n == 0) throw AppException.NotFound();
+            await Audit.LogActivity(db, ctx, "assignment", id, "checklist",
+                done == 1 ? "Checklist ticked" : "Checklist cleared");
+            return Results.Json(new { ok = true });
+        });
+
+        app.MapDelete("/api/assignments/{id:int}/checklist/{cid:long}", async (HttpContext ctx, Db db, int id, long cid) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
+            await db.Exec("DELETE FROM assignment_checklist WHERE id = @cid AND assignment_id = @id", new { cid, id });
+            await Audit.LogActivity(db, ctx, "assignment", id, "checklist_removed", "Checklist item removed");
+            return Results.Json(new { ok = true });
         });
     }
 }
@@ -250,7 +457,7 @@ public static class WorkApprovalEndpoints
         "all" => ("1=1", new { }),
         "team" => ("""
             (w.department_id = @dept OR w.raised_by = ANY(@people) OR w.approver_id = ANY(@people))
-            """, (object)new { dept = u.DepartmentId, people = u.People }),
+            """, (object)new { dept = u.DepartmentId, people = u.People ?? Array.Empty<int>() }),
         _ => ("(w.raised_by = @uid OR w.approver_id = @uid)", (object)new { uid = u.Id })
     };
 
@@ -379,8 +586,11 @@ public static class DashboardEndpoints
             u.Require("opportunities.view");
             var s = Scope.Banking(u);
             var p = new { people = s.People, divId = s.DivisionId, uid = s.UserId };
+            /* is_converted::integer keeps the pipeline filter valid whether the
+               column is smallint or a real boolean — PostgreSQL will not coerce
+               boolean to 0 implicitly, so the cast is what prevents a 42804. */
             const string live = """
-                o.deleted_at IS NULL AND o.is_converted = 0
+                o.deleted_at IS NULL AND o.is_converted::integer = 0
                 AND o.stage IN ('Lead','Qualified','Pitched','Term Sheet','Mandated')
                 """;
 

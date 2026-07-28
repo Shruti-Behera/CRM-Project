@@ -9,7 +9,9 @@ export default function WorkApprovals() {
   const [err, setErr] = useState('');
 
   const load = () => get('/work-approvals').then(setRows).catch(e => setErr(e.message));
-  useEffect(load, []);
+  // Return undefined from the effect (not load()'s Promise) — a Promise as a
+  // cleanup value throws "destroy is not a function" when React unmounts.
+  useEffect(() => { load(); }, []);
 
   const decide = async (id, status) => {
     const remarks = window.prompt(`${status} — any remarks?`) ?? '';

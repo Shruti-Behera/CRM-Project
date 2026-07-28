@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { get, post, put } from '../lib/api.js';
 import { Card, Loading, ErrorNote } from '../components/Bits.jsx';
+import { useAuth } from '../lib/auth.jsx';
 
 const TYPES = ['Mutual Fund','Insurance','FII / FPI','DII','PMS','AIF / Hedge Fund',
                'Bank Treasury','Corporate Treasury','Family Office'];
@@ -15,6 +16,7 @@ const EMPANEL = ['Empanelled','In process','Not empanelled','Suspended'];
 export default function InstitutionForm() {
   const { id } = useParams();
   const nav = useNavigate();
+  const { user } = useAuth();
   const [form, setForm] = useState({
     name: '', house_code: '', inst_type: 'Mutual Fund', tier: 'B',
     empanelment: 'In process', rm_id: '', city: '', aum_cr: 0,
@@ -26,7 +28,11 @@ export default function InstitutionForm() {
   const [loading, setLoading] = useState(!!id);
 
   useEffect(() => {
-    get('/users').then(setUsers).catch(() => {});
+    // Managing users needs users.view; a coverage-only role does not have it.
+    // Fall back to the signed-in user so the RM field is never an empty dead-end.
+    get('/users')
+      .then(list => setUsers(list?.length ? list : (user ? [{ id: user.id, name: user.name }] : [])))
+      .catch(() => setUsers(user ? [{ id: user.id, name: user.name }] : []));
     if (id) get(`/institutions/${id}`).then(c => {
       setForm({ ...c, schemes: c.schemes || [] });
       setLoading(false);

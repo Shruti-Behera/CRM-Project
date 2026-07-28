@@ -27,8 +27,10 @@ const NAV = {
     right: 'assignments.view',
     sections: [
       ['Work', [['/internal', 'Dashboard'], ['/internal/my-day', 'My day'],
-                ['/internal/assignments', 'Assignments']]],
+                ['/internal/assignments', 'Assignments'], ['/internal/kanban', 'Work board'],
+                ['/internal/assignments/new', 'New assignment']]],
       ['Control', [['/internal/work-approvals', 'Work approvals'], ['/internal/workload', 'Workload']]],
+      ['Schedule', [['/internal/meetings', 'Meetings'], ['/internal/calendar', 'Calendar']]],
       ['Masters', [['/masters', 'Masters'], ['/users', 'Users & rights']]]
     ]
   }

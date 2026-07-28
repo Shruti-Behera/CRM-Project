@@ -12,7 +12,10 @@ export default function Institutions() {
 
   const load = () => get(`/institutions?${new URLSearchParams(q ? { q } : {})}`)
     .then(setRows).catch(e => setErr(e.message));
-  useEffect(load, []);
+  // Wrap in a block so the effect returns undefined, not load()'s Promise.
+  // React treats an effect's return value as its cleanup, and a Promise there
+  // throws "destroy is not a function" on unmount (StrictMode unmounts in dev).
+  useEffect(() => { load(); }, []);
 
   if (err) return <ErrorNote>{err}</ErrorNote>;
 

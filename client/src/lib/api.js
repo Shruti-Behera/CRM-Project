@@ -23,7 +23,17 @@ export async function api(path, { method = "GET", body, isForm } = {}) {
   });
 
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  // The API always answers with JSON, but a proxy timeout, gateway error, or
+  // static fall-through can return HTML/plain text. Parse defensively so a bad
+  // response surfaces as a readable error instead of a blank screen.
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (res.ok) throw new Error("The server sent a response the app could not read");
+    }
+  }
 
   // Handle 401: Reload for expired sessions, but throw an error for failed login attempts
   if (res.status === 401) {

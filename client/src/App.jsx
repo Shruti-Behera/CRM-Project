@@ -9,7 +9,15 @@ import OpportunityDetail from "./pages/OpportunityDetail.jsx";
 import Institutions from "./pages/Institutions.jsx";
 import InstitutionForm from "./pages/InstitutionForm.jsx";
 import Brokerage from "./pages/Brokerage.jsx";
+import InternalDashboard from "./pages/InternalDashboard.jsx";
+import MyDay from "./pages/MyDay.jsx";
 import Assignments from "./pages/Assignments.jsx";
+import AssignmentForm from "./pages/AssignmentForm.jsx";
+import AssignmentDetail from "./pages/AssignmentDetail.jsx";
+import Kanban from "./pages/Kanban.jsx";
+import Workload from "./pages/Workload.jsx";
+import Meetings from "./pages/Meetings.jsx";
+import CalendarPage from "./pages/CalendarPage.jsx";
 import WorkApprovals from "./pages/WorkApprovals.jsx";
 import Masters from "./pages/Masters.jsx";
 import Users from "./pages/Users.jsx";
@@ -50,7 +58,15 @@ export default function App() {
           element={<InstitutionForm />}
         />
         <Route path="/institutional/brokerage" element={<Brokerage />} />
+        <Route path="/internal" element={<InternalDashboard />} />
+        <Route path="/internal/my-day" element={<MyDay />} />
         <Route path="/internal/assignments" element={<Assignments />} />
+        <Route path="/internal/assignments/new" element={<AssignmentForm />} />
+        <Route path="/internal/assignments/:id" element={<AssignmentDetail />} />
+        <Route path="/internal/kanban" element={<Kanban />} />
+        <Route path="/internal/workload" element={<Workload />} />
+        <Route path="/internal/meetings" element={<Meetings />} />
+        <Route path="/internal/calendar" element={<CalendarPage />} />
         <Route path="/internal/work-approvals" element={<WorkApprovals />} />
         <Route path="/masters" element={<Masters />} />
         <Route path="/users" element={<Users />} />

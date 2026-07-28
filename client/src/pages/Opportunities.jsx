@@ -15,7 +15,7 @@ export default function Opportunities() {
     if (q) params.set('q', q);
     get(`/opportunities?${params}`).then(setRows).catch(e => setErr(e.message));
   };
-  useEffect(load, [openOnly]);
+  useEffect(() => { load(); }, [openOnly]);
 
   if (err) return <ErrorNote>{err}</ErrorNote>;
 

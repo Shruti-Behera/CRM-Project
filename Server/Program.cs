@@ -145,6 +145,7 @@ InstitutionEndpoints.Map(app);
 BrokerageEndpoints.Map(app);
 AssignmentEndpoints.Map(app);
 WorkApprovalEndpoints.Map(app);
+MeetingEndpoints.Map(app);
 DashboardEndpoints.Map(app);
 AttachmentEndpoints.Map(app);
 
