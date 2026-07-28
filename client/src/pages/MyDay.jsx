@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { get, inr, shortDate } from '../lib/api.js';
-import { Card, Pill, pClass, Loading, ErrorNote } from '../components/Bits.jsx';
+import { get, post, inr, shortDate } from '../lib/api.js';
+import { Card, Pill, pClass, Loading, ErrorNote, Modal } from '../components/Bits.jsx';
 
 const today = () => new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const todayIso = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const softGet = (p) => get(p).then(r => r || []).catch(() => []);
 
 function TaskLine({ t }) {
   return (
@@ -32,18 +33,36 @@ const Block = ({ title, items, children, empty }) => (
 export default function MyDay() {
   const [data, setData] = useState(null);
   const [meetings, setMeetings] = useState([]);
+  const [allTasks, setAllTasks] = useState([]);
   const [err, setErr] = useState('');
+  const [log, setLog] = useState(null);
+  const [busy, setBusy] = useState(false);
 
+  const load = () => get('/assignments/my-day').then(setData).catch(e => setErr(e.message));
   useEffect(() => {
-    get('/assignments/my-day').then(setData).catch(e => setErr(e.message));
-    // Meetings are a separate module; fetch today's and fail soft if unavailable.
+    load();
     get(`/meetings?on=${todayIso()}`).then(m => setMeetings(m || [])).catch(() => setMeetings([]));
+    softGet('/assignments').then(setAllTasks);
   }, []);
 
-  if (err) return <ErrorNote>{err}</ErrorNote>;
+  const openLog = () => setLog({ assignment_id: '', log_date: todayIso(), hours: 1, narration: '' });
+  const saveLog = async () => {
+    if (!log.assignment_id) { setErr('Pick an assignment to log against'); return; }
+    if (!Number(log.hours)) { setErr('Enter hours'); return; }
+    setBusy(true);
+    try {
+      await post(`/assignments/${log.assignment_id}/time`, {
+        log_date: log.log_date, hours: Number(log.hours), narration: log.narration || undefined
+      });
+      setLog(null); setErr(''); await load();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  if (err && !data) return <ErrorNote>{err}</ErrorNote>;
   if (!data) return <Loading />;
 
-  const { overdue = [], today: due = [], upcoming = [], approvals = [], hours_today } = data;
+  const { overdue = [], today: due = [], upcoming = [], approvals = [], logs_today = [], hours_today } = data;
 
   const kpis = [
     [due.length, 'Due today', ''],
@@ -58,8 +77,12 @@ export default function MyDay() {
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <div><div className="eyebrow">{today()}</div><h3>My day</h3></div>
-        <Link className="btn primary" to="/internal/assignments/new">New assignment</Link>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={openLog}>Log time</button>
+          <Link className="btn primary" to="/internal/assignments/new">New assignment</Link>
+        </div>
       </div>
+      {err && <ErrorNote>{err}</ErrorNote>}
 
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', marginBottom: 14 }}>
         {kpis.map(([v, l, tone]) => (
@@ -109,8 +132,38 @@ export default function MyDay() {
               </div>
             ))}
           </Block>
+
+          <Block title="Time logged today" items={logs_today} empty="No time logged today.">
+            {logs_today.map(l => (
+              <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F2F4F8' }}>
+                <div>
+                  <Link to={`/internal/assignments/${l.assignment_id}`} className="mono" style={{ fontSize: 11.5, fontWeight: 600 }}>{l.assignment_no}</Link>
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>{l.narration || l.title}</div>
+                </div>
+                <span className="mono" style={{ fontSize: 12 }}>{Number(l.hours)}h</span>
+              </div>
+            ))}
+          </Block>
         </div>
       </div>
+
+      {log && (
+        <Modal title="Log time" saveLabel="Log time" busy={busy} onClose={() => setLog(null)} onSave={saveLog}>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(2,1fr)' }}>
+            <div style={{ gridColumn: '1 / -1' }}><label>Assignment</label>
+              <select value={log.assignment_id} onChange={e => setLog(v => ({ ...v, assignment_id: e.target.value }))}>
+                <option value="">— pick an assignment —</option>
+                {allTasks.map(t => <option key={t.id} value={t.id}>{t.assignment_no} — {t.title}</option>)}
+              </select></div>
+            <div><label>Date</label><input type="date" value={log.log_date}
+              onChange={e => setLog(v => ({ ...v, log_date: e.target.value }))} /></div>
+            <div><label>Hours</label><input type="number" step="0.25" value={log.hours}
+              onChange={e => setLog(v => ({ ...v, hours: e.target.value }))} /></div>
+            <div style={{ gridColumn: '1 / -1' }}><label>Narration</label>
+              <input value={log.narration} onChange={e => setLog(v => ({ ...v, narration: e.target.value }))} /></div>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

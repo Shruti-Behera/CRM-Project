@@ -83,6 +83,13 @@ public static class AssignmentEndpoints
                       JOIN users u ON u.id = w.raised_by
                      WHERE w.status = 'Pending' AND w.approver_id = @uid
                     """, new { uid }),
+                logs_today = await db.Q("""
+                    SELECT t.id, t.hours, t.narration, t.assignment_id,
+                           a.assignment_no, a.title
+                      FROM time_logs t JOIN assignments a ON a.id = t.assignment_id
+                     WHERE t.user_id = @uid AND t.log_date = CURRENT_DATE
+                     ORDER BY t.id DESC
+                    """, new { uid }),
                 hours_today = await db.Scalar<decimal>("""
                     SELECT COALESCE(SUM(hours),0) FROM time_logs
                      WHERE user_id = @uid AND log_date = CURRENT_DATE
@@ -100,6 +107,41 @@ public static class AssignmentEndpoints
         {
             ((CurrentUser)ctx.Items["user"]!).Require("assignments.view");
             return Results.Json(await db.Q("SELECT * FROM v_sla_breaches ORDER BY days_over_sla DESC"));
+        });
+
+        /* GET /api/time-logs — every time entry the caller can see (assignment
+           scope), joined to its assignment, department and author. Powers the
+           Time Log control screen. Optional from/to/who/q filters. */
+        app.MapGet("/api/time-logs", async (HttpContext ctx, Db db) =>
+        {
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("assignments.view");
+            var s = Scope.Assignment(u, "a");
+            var where = new List<string> { s.Sql, "a.deleted_at IS NULL" };
+            var p = new DynamicParameters();
+            p.Add("people", s.People); p.Add("deptId", s.DepartmentId); p.Add("uid", s.UserId);
+
+            var qs = ctx.Request.Query;
+            if (!string.IsNullOrEmpty(qs["from"])) { where.Add("tl.log_date >= CAST(@from AS date)"); p.Add("from", (string)qs["from"]!); }
+            if (!string.IsNullOrEmpty(qs["to"])) { where.Add("tl.log_date <= CAST(@to AS date)"); p.Add("to", (string)qs["to"]!); }
+            if (!string.IsNullOrEmpty(qs["who"])) { where.Add("tl.user_id = @who"); p.Add("who", int.Parse(qs["who"]!)); }
+            if (!string.IsNullOrEmpty(qs["q"]))
+            {
+                where.Add("(a.title ILIKE @q OR a.assignment_no ILIKE @q OR tl.narration ILIKE @q)");
+                p.Add("q", $"%{qs["q"]}%");
+            }
+
+            return Results.Json(await db.Q($"""
+                SELECT tl.id, to_char(tl.log_date, 'YYYY-MM-DD') AS log_date, tl.hours, tl.narration,
+                       tl.assignment_id, a.assignment_no, a.title,
+                       d.name AS department, uw.name AS who
+                  FROM time_logs tl
+                  JOIN assignments a ON a.id = tl.assignment_id
+                  JOIN users uw ON uw.id = tl.user_id
+                  LEFT JOIN departments d ON d.id = a.department_id
+                 WHERE {string.Join(" AND ", where)}
+                 ORDER BY tl.log_date DESC, tl.id DESC LIMIT 1000
+                """, p));
         });
 
         app.MapGet("/api/assignments/{id:int}", async (HttpContext ctx, Db db, int id) =>
@@ -206,8 +248,13 @@ public static class AssignmentEndpoints
                         """, new { aid, title = subtasks[i].Str("title"),
                                    owner = subtasks[i].OptInt("owner_id"), order = i + 1 }, tx);
 
-                string[] checklist = ["Requirement received", "Discussion completed", "Work started",
-                                      "Under Review", "Approved", "Completed"];
+                /* Checklist items come from the create form; if none were sent
+                   we seed the standard flow so nothing regresses. */
+                var checklist = b.StrArray("checklist")
+                    .Select(x => x.Trim()).Where(x => x.Length > 0).ToArray();
+                if (checklist.Length == 0)
+                    checklist = ["Requirement received", "Discussion completed", "Work started",
+                                 "Under Review", "Approved", "Completed"];
                 for (var i = 0; i < checklist.Length; i++)
                     await conn.ExecuteAsync("""
                         INSERT INTO assignment_checklist (assignment_id, item_text, sort_order)
@@ -386,19 +433,35 @@ public static class AssignmentEndpoints
             return Results.Json(new { id = sid }, statusCode: 201);
         });
 
+        /* PATCH sub-task — any subset of complete / rename / reassign. */
         app.MapPatch("/api/assignments/{id:int}/subtasks/{sid:long}", async (HttpContext ctx, Db db, int id, long sid, B b) =>
         {
             ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
-            var done = b.Bool("is_done") ? 1 : 0;
-            var n = await db.Exec("""
-                UPDATE assignment_subtasks SET is_done = @done,
-                       done_at = CASE WHEN @done = 1 THEN NOW() ELSE NULL END
-                 WHERE id = @sid AND assignment_id = @id
-                """, new { done, sid, id });
+
+            var sets = new List<string>();
+            var p = new DynamicParameters();
+            p.Add("sid", sid); p.Add("id", id);
+            var progressChanged = false;
+            string activity = "Sub-task updated";
+
+            if (b.ContainsKey("is_done"))
+            {
+                var done = b.Bool("is_done") ? 1 : 0;
+                sets.Add("is_done = @done");
+                sets.Add("done_at = CASE WHEN @done = 1 THEN NOW() ELSE NULL END");
+                p.Add("done", done);
+                progressChanged = true;
+                activity = done == 1 ? "Sub-task completed" : "Sub-task reopened";
+            }
+            if (b.ContainsKey("title")) { sets.Add("title = @title"); p.Add("title", b.Str("title")); activity = "Sub-task renamed"; }
+            if (b.ContainsKey("owner_id")) { sets.Add("owner_id = @owner"); p.Add("owner", b.OptInt("owner_id")); activity = "Sub-task reassigned"; }
+            if (sets.Count == 0) throw AppException.BadRequest("Nothing to change");
+
+            var n = await db.Exec(
+                $"UPDATE assignment_subtasks SET {string.Join(", ", sets)} WHERE id = @sid AND assignment_id = @id", p);
             if (n == 0) throw AppException.NotFound();
-            await Reprogress(db, id);
-            await Audit.LogActivity(db, ctx, "assignment", id, "subtask",
-                done == 1 ? "Sub-task completed" : "Sub-task reopened");
+            if (progressChanged) await Reprogress(db, id);
+            await Audit.LogActivity(db, ctx, "assignment", id, "subtask", activity);
             return Results.Json(new { ok = true });
         });
 
@@ -425,18 +488,31 @@ public static class AssignmentEndpoints
             return Results.Json(new { id = cid }, statusCode: 201);
         });
 
+        /* PATCH checklist item — tick/clear and/or rename. */
         app.MapPatch("/api/assignments/{id:int}/checklist/{cid:long}", async (HttpContext ctx, Db db, int id, long cid, B b) =>
         {
             ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
-            var done = b.Bool("is_done") ? 1 : 0;
-            var n = await db.Exec("""
-                UPDATE assignment_checklist SET is_done = @done,
-                       done_at = CASE WHEN @done = 1 THEN NOW() ELSE NULL END
-                 WHERE id = @cid AND assignment_id = @id
-                """, new { done, cid, id });
+
+            var sets = new List<string>();
+            var p = new DynamicParameters();
+            p.Add("cid", cid); p.Add("id", id);
+            string activity = "Checklist updated";
+
+            if (b.ContainsKey("is_done"))
+            {
+                var done = b.Bool("is_done") ? 1 : 0;
+                sets.Add("is_done = @done");
+                sets.Add("done_at = CASE WHEN @done = 1 THEN NOW() ELSE NULL END");
+                p.Add("done", done);
+                activity = done == 1 ? "Checklist ticked" : "Checklist cleared";
+            }
+            if (b.ContainsKey("item_text")) { sets.Add("item_text = @text"); p.Add("text", b.Str("item_text")); activity = "Checklist item renamed"; }
+            if (sets.Count == 0) throw AppException.BadRequest("Nothing to change");
+
+            var n = await db.Exec(
+                $"UPDATE assignment_checklist SET {string.Join(", ", sets)} WHERE id = @cid AND assignment_id = @id", p);
             if (n == 0) throw AppException.NotFound();
-            await Audit.LogActivity(db, ctx, "assignment", id, "checklist",
-                done == 1 ? "Checklist ticked" : "Checklist cleared");
+            await Audit.LogActivity(db, ctx, "assignment", id, "checklist", activity);
             return Results.Json(new { ok = true });
         });
 

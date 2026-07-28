@@ -32,6 +32,10 @@ export default function AssignmentForm() {
     watchers: [], tags: []
   });
   const [subtasks, setSubtasks] = useState([]);
+  const [checklist, setChecklist] = useState([
+    'Requirement received', 'Discussion completed', 'Work started',
+    'Under Review', 'Approved', 'Completed'
+  ]);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -51,6 +55,10 @@ export default function AssignmentForm() {
   const addSub = () => setSubtasks(s => [...s, { title: '', owner_id: '' }]);
   const setSub = (i, key, v) => setSubtasks(s => s.map((x, j) => j === i ? { ...x, [key]: v } : x));
   const dropSub = (i) => setSubtasks(s => s.filter((_, j) => j !== i));
+
+  const addChk = () => setChecklist(c => [...c, '']);
+  const setChk = (i, v) => setChecklist(c => c.map((x, j) => j === i ? v : x));
+  const dropChk = (i) => setChecklist(c => c.filter((_, j) => j !== i));
 
   const save = async (e) => {
     e.preventDefault();
@@ -78,7 +86,8 @@ export default function AssignmentForm() {
         tags: form.tags,
         subtasks: subtasks
           .filter(s => s.title.trim())
-          .map(s => ({ title: s.title, owner_id: s.owner_id ? Number(s.owner_id) : undefined }))
+          .map(s => ({ title: s.title, owner_id: s.owner_id ? Number(s.owner_id) : undefined })),
+        checklist: checklist.map(c => c.trim()).filter(Boolean)
       };
       const res = await post('/assignments', payload);
       nav(res?.id ? `/internal/assignments/${res.id}` : '/internal/assignments');
@@ -134,18 +143,34 @@ export default function AssignmentForm() {
           </div>
         </Card>
 
-        <Card title="Sub-tasks" extra={<button type="button" className="btn" onClick={addSub}>Add</button>}>
-          {subtasks.length ? subtasks.map((s, i) => (
-            <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-              <input placeholder="Sub-task" value={s.title} style={{ flex: 2 }}
-                onChange={e => setSub(i, 'title', e.target.value)} />
-              <Select value={s.owner_id} onChange={e => setSub(i, 'owner_id', e.target.value)}
-                opts={users} placeholder="Owner" />
-              <button type="button" className="btn" onClick={() => dropSub(i)}>×</button>
-            </div>
-          )) : <p style={{ color: 'var(--muted)', margin: 0, fontSize: 13 }}>
-            Break the work down — sub-tasks carry over to the assignment.</p>}
-        </Card>
+        <div className="grid">
+          <Card title="Checklist" extra={<button type="button" className="btn" onClick={addChk}>Add</button>}>
+            {checklist.length ? checklist.map((c, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+                <input type="checkbox" checked readOnly style={{ width: 'auto' }} title="Ticked off on the assignment page" />
+                <input placeholder="Checklist item" value={c} style={{ flex: 1 }}
+                  onChange={e => setChk(i, e.target.value)} />
+                <button type="button" className="btn" style={{ padding: '0 8px' }} onClick={() => dropChk(i)}>×</button>
+              </div>
+            )) : <p style={{ color: 'var(--muted)', margin: 0, fontSize: 13 }}>
+              No checklist items — add the steps this work must pass through.</p>}
+            <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>
+              These carry over to the assignment, where they can be ticked off.</p>
+          </Card>
+
+          <Card title="Sub-tasks" extra={<button type="button" className="btn" onClick={addSub}>Add</button>}>
+            {subtasks.length ? subtasks.map((s, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                <input placeholder="Sub-task" value={s.title} style={{ flex: 2 }}
+                  onChange={e => setSub(i, 'title', e.target.value)} />
+                <Select value={s.owner_id} onChange={e => setSub(i, 'owner_id', e.target.value)}
+                  opts={users} placeholder="Owner" />
+                <button type="button" className="btn" style={{ padding: '0 8px' }} onClick={() => dropSub(i)}>×</button>
+              </div>
+            )) : <p style={{ color: 'var(--muted)', margin: 0, fontSize: 13 }}>
+              Break the work down — sub-tasks carry over to the assignment.</p>}
+          </Card>
+        </div>
       </div>
 
       <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>

@@ -138,14 +138,20 @@ app.MapGet("/api/health", async () =>
 });
 
 AuthEndpoints.Map(app);
+ShellEndpoints.Map(app);
 UserEndpoints.Map(app);
 MasterEndpoints.Map(app);
+AccountEndpoints.Map(app);
 OpportunityEndpoints.Map(app);
 InstitutionEndpoints.Map(app);
 BrokerageEndpoints.Map(app);
 AssignmentEndpoints.Map(app);
 WorkApprovalEndpoints.Map(app);
 MeetingEndpoints.Map(app);
+EmailEndpoints.Map(app);
+ResearchReportEndpoints.Map(app);
+SettingsEndpoints.Map(app);
+AdminEndpoints.Map(app);
 DashboardEndpoints.Map(app);
 AttachmentEndpoints.Map(app);
 

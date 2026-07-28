@@ -1,74 +1,97 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { get, shortDate } from '../lib/api.js';
-import { Card, Pill, pClass, Loading, Empty, ErrorNote } from '../components/Bits.jsx';
+import { useEffect, useMemo, useState } from 'react';
+import { get } from '../lib/api.js';
+import { Card, Avatar, Loading, Empty, ErrorNote } from '../components/Bits.jsx';
 
-const utilTone = (v) => v == null ? 'p-hold' : v > 100 ? 'p-red' : v >= 75 ? 'p-pending' : 'p-done';
+const CAP = 40; // hours per week, as in the prototype
+const softGet = (p) => get(p).then(r => r || []).catch(() => []);
+const barColor = (pct) => pct > 100 ? 'var(--red)' : pct > 75 ? 'var(--amber)' : 'var(--green)';
 
 export default function Workload() {
-  const [workload, setWorkload] = useState(null);
-  const [sla, setSla] = useState(null);
+  const [tasks, setTasks] = useState(null);
+  const [users, setUsers] = useState([]);
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    get('/assignments/reports/workload').then(setWorkload).catch(e => setErr(e.message));
-    get('/assignments/reports/sla').then(setSla).catch(e => setErr(e.message));
+    get('/assignments').then(setTasks).catch(e => setErr(e.message));
+    softGet('/users').then(setUsers);
   }, []);
 
+  const rows = useMemo(() => {
+    if (!tasks) return [];
+    // Employee basis: all active users if available, else whoever owns work.
+    const names = users.length
+      ? users.filter(u => u.status === 'Active').map(u => ({ name: u.name, dept: u.department || '—' }))
+      : [...new Set(tasks.map(t => t.assigned_to_name).filter(Boolean))]
+          .map(n => ({ name: n, dept: (tasks.find(t => t.assigned_to_name === n) || {}).department || '—' }));
+
+    return names.map(({ name, dept }) => {
+      const mine = tasks.filter(t => t.assigned_to_name === name);
+      const open = mine.filter(t => t.status !== 'Completed');
+      return {
+        name, dept,
+        total: mine.length,
+        open: open.length,
+        late: mine.filter(t => t.is_overdue).length,
+        crit: open.filter(t => ['High', 'Critical'].includes(t.priority)).length,
+        est: open.reduce((n, t) => n + Number(t.estimated_hours || 0), 0),
+        logged: mine.reduce((n, t) => n + Number(t.actual_hours || 0), 0)
+      };
+    }).sort((a, b) => b.est - a.est);
+  }, [tasks, users]);
+
   if (err) return <ErrorNote>{err}</ErrorNote>;
-  if (!workload || !sla) return <Loading />;
+  if (!tasks) return <Loading />;
 
   return (
     <>
-      <div className="eyebrow">Capacity &amp; delivery</div>
-      <h3 style={{ marginBottom: 14 }}>Workload &amp; SLA</h3>
+      <div className="eyebrow">Open effort by person, against a 40-hour week</div>
+      <h3 style={{ marginBottom: 14 }}>Workload</h3>
 
-      <Card title="Workload by employee" extra={<span className="eyebrow">{workload.length} people</span>} pad={false}>
-        <table className="tbl">
-          <thead><tr>
-            <th>Employee</th><th>Department</th>
-            <th style={{ textAlign: 'right' }}>Open</th><th style={{ textAlign: 'right' }}>Overdue</th>
-            <th style={{ textAlign: 'right' }}>Open hours</th><th style={{ textAlign: 'right' }}>Capacity</th>
-            <th>Utilisation</th>
-          </tr></thead>
-          <tbody>
-            {workload.length ? workload.map(w => (
-              <tr key={w.user_id}>
-                <td style={{ fontWeight: 500 }}>{w.name}</td>
-                <td style={{ fontSize: 12.5 }}>{w.department || '—'}</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{w.open_tasks}</td>
-                <td className="mono" style={{ textAlign: 'right', color: Number(w.overdue_tasks) ? 'var(--red)' : undefined }}>{w.overdue_tasks}</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{Number(w.open_hours)}h</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{Number(w.weekly_capacity_hours)}h</td>
-                <td><Pill kind={utilTone(w.utilisation_pct == null ? null : Number(w.utilisation_pct))}>
-                  {w.utilisation_pct == null ? '—' : `${w.utilisation_pct}%`}</Pill></td>
-              </tr>
-            )) : <Empty cols={7}>No active employees.</Empty>}
-          </tbody>
-        </table>
+      <Card title="Capacity" extra={<span className="eyebrow">Open estimated hours vs {CAP}h</span>}>
+        {rows.length ? rows.map(r => {
+          const pct = Math.min(150, Math.round((r.est / CAP) * 100));
+          return (
+            <div key={r.name} className="bar-row">
+              <Avatar name={r.name} />
+              <span style={{ fontSize: 12.5, width: 140, flex: 'none' }}>{r.name}
+                <div style={{ fontSize: 10.5, color: 'var(--muted)' }}>{r.dept}</div></span>
+              <span className="bar-track"><i style={{ width: `${Math.min(100, pct)}%`, background: barColor(pct) }} /></span>
+              <span className="mono" style={{ fontSize: 11.5, width: 96, textAlign: 'right' }}>{r.est}h · {pct}%</span>
+            </div>
+          );
+        }) : <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No active users.</p>}
       </Card>
 
       <div style={{ height: 14 }} />
 
-      <Card title="SLA breaches" extra={<span className="eyebrow">{sla.length} over SLA</span>} pad={false}>
+      <Card pad={false}>
         <table className="tbl">
           <thead><tr>
-            <th>No.</th><th>Title</th><th>Owner</th><th>Department</th><th>Due</th>
-            <th style={{ textAlign: 'right' }}>Days over</th><th>Priority</th><th>Status</th>
+            <th>Employee</th><th>Department</th>
+            <th style={{ textAlign: 'right' }}>Total</th><th style={{ textAlign: 'right' }}>Open</th>
+            <th style={{ textAlign: 'right' }}>Overdue</th><th style={{ textAlign: 'right' }}>High / critical</th>
+            <th style={{ textAlign: 'right' }}>Open effort</th><th style={{ textAlign: 'right' }}>Logged</th>
+            <th>Utilisation</th>
           </tr></thead>
           <tbody>
-            {sla.length ? sla.map(s => (
-              <tr key={s.id}>
-                <td><Link to={`/internal/assignments/${s.id}`} className="mono" style={{ fontSize: 11.5, fontWeight: 600 }}>{s.assignment_no}</Link></td>
-                <td>{s.title}</td>
-                <td style={{ fontSize: 12.5 }}>{s.owner}</td>
-                <td style={{ fontSize: 12.5 }}>{s.department || '—'}</td>
-                <td className="mono" style={{ fontSize: 12 }}>{shortDate(s.due_date)}</td>
-                <td className="mono" style={{ textAlign: 'right', color: 'var(--red)', fontWeight: 600 }}>{s.days_over_sla}d</td>
-                <td><Pill kind={pClass(s.priority)}>{s.priority}</Pill></td>
-                <td>{s.status}</td>
-              </tr>
-            )) : <Empty cols={8}>Nothing is past its SLA. </Empty>}
+            {rows.length ? rows.map(r => {
+              const pct = Math.round((r.est / CAP) * 100);
+              return (
+                <tr key={r.name}>
+                  <td><Avatar name={r.name} /> <span style={{ fontSize: 13 }}>{r.name}</span></td>
+                  <td style={{ fontSize: 12.5 }}>{r.dept}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{r.total}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{r.open}</td>
+                  <td className="mono" style={{ textAlign: 'right', color: r.late ? 'var(--red)' : undefined, fontWeight: r.late ? 600 : 400 }}>{r.late}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{r.crit}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{r.est}h</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{r.logged}h</td>
+                  <td><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className="prog"><i style={{ width: `${Math.min(100, pct)}%`, background: barColor(pct) }} /></div>
+                    <span className="mono" style={{ fontSize: 11 }}>{pct}%</span></div></td>
+                </tr>
+              );
+            }) : <Empty cols={9}>No users to show.</Empty>}
           </tbody>
         </table>
       </Card>

@@ -45,7 +45,7 @@ public static class MeetingEndpoints
             return Results.Json(await db.Q($"""
                 SELECT m.id, m.workspace, m.title, m.agenda, m.minutes,
                        to_char(m.meeting_date, 'YYYY-MM-DD') AS meeting_date,
-                       to_char(m.meeting_time, 'HH24:MI')    AS meeting_time,
+                       left(m.meeting_time::text, 5)         AS meeting_time,
                        m.duration_min, m.link, m.status,
                        cu.name AS created_by_name,
                        (SELECT STRING_AGG(u.name, ', ' ORDER BY u.name)
@@ -54,7 +54,7 @@ public static class MeetingEndpoints
                        (SELECT COUNT(*) FROM meeting_participants mp
                          WHERE mp.meeting_id = m.id) AS participant_count,
                        (SELECT COUNT(*) FROM meeting_participants mp
-                         WHERE mp.meeting_id = m.id AND mp.attended = 1) AS attended_count
+                         WHERE mp.meeting_id = m.id AND mp.attended::integer = 1) AS attended_count
                   FROM meetings m
                   JOIN users cu ON cu.id = m.created_by
                  WHERE {string.Join(" AND ", where)}
@@ -117,6 +117,15 @@ public static class MeetingEndpoints
             await db.Exec("UPDATE meetings SET status = @status, minutes = @minutes WHERE id = @id",
                 new { status, minutes = b.OptStr("minutes"), id });
             await Audit.LogActivity(db, ctx, "meeting", id, "updated", $"Meeting {status.ToLowerInvariant()}");
+            return Results.Json(new { ok = true });
+        });
+
+        app.MapDelete("/api/meetings/{id:int}", async (HttpContext ctx, Db db, int id) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("assignments.create");
+            var n = await db.Exec("DELETE FROM meetings WHERE id = @id", new { id });
+            if (n == 0) throw AppException.NotFound();
+            await Audit.LogActivity(db, ctx, "meeting", id, "deleted", "Meeting removed");
             return Results.Json(new { ok = true });
         });
     }

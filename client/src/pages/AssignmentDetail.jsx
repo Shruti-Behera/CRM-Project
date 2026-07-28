@@ -38,9 +38,20 @@ export default function AssignmentDetail() {
   const toggleSub = guard((s) => patch(`/assignments/${id}/subtasks/${s.id}`, { is_done: !(Number(s.is_done) === 1) }));
   const addSub = guard(() => { if (!newSub.trim()) return Promise.resolve(); const r = post(`/assignments/${id}/subtasks`, { title: newSub }); setNewSub(''); return r; });
   const dropSub = guard((s) => del(`/assignments/${id}/subtasks/${s.id}`));
+  const renameSub = guard((s) => {
+    const v = window.prompt('Rename sub-task', s.title);
+    if (v == null || !v.trim()) return Promise.resolve();
+    return patch(`/assignments/${id}/subtasks/${s.id}`, { title: v.trim() });
+  });
+  const assignSub = guard((s, ownerId) => patch(`/assignments/${id}/subtasks/${s.id}`, { owner_id: ownerId ? Number(ownerId) : null }));
   const toggleChk = guard((c) => patch(`/assignments/${id}/checklist/${c.id}`, { is_done: !(Number(c.is_done) === 1) }));
   const addChk = guard(() => { if (!newChk.trim()) return Promise.resolve(); const r = post(`/assignments/${id}/checklist`, { item_text: newChk }); setNewChk(''); return r; });
   const dropChk = guard((c) => del(`/assignments/${id}/checklist/${c.id}`));
+  const renameChk = guard((c) => {
+    const v = window.prompt('Rename checklist item', c.item_text);
+    if (v == null || !v.trim()) return Promise.resolve();
+    return patch(`/assignments/${id}/checklist/${c.id}`, { item_text: v.trim() });
+  });
   const addNote = guard(() => {
     if (!note.trim()) return Promise.resolve();
     const body = { comment: note };
@@ -119,12 +130,21 @@ export default function AssignmentDetail() {
 
           <Card title={<>Sub-tasks <span className="eyebrow" style={{ marginLeft: 6 }}>{subsDone} of {subs.length} done</span></>}>
             {subs.length ? subs.map(s => (
-              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid #F2F4F8' }}>
+              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 0', borderBottom: '1px solid #F2F4F8' }}>
                 <input type="checkbox" checked={Number(s.is_done) === 1} onChange={() => toggleSub(s)}
                   disabled={!can('assignments.edit')} style={{ width: 'auto' }} />
                 <span style={{ flex: 1, textDecoration: Number(s.is_done) === 1 ? 'line-through' : 'none', color: Number(s.is_done) === 1 ? 'var(--muted)' : 'inherit' }}>{s.title}</span>
-                {s.owner && <Avatar name={s.owner} size={20} />}
-                {can('assignments.edit') && <button className="btn" style={{ padding: '0 7px' }} onClick={() => dropSub(s)}>×</button>}
+                {can('assignments.edit') ? (
+                  <>
+                    <select value={s.owner_id || ''} onChange={e => assignSub(s, e.target.value)}
+                      title="Assign owner" style={{ width: 'auto', fontSize: 11, padding: '2px 4px' }}>
+                      <option value="">Owner…</option>
+                      {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                    <button className="btn" style={{ padding: '0 7px' }} title="Rename" onClick={() => renameSub(s)}>✎</button>
+                    <button className="btn" style={{ padding: '0 7px' }} title="Delete" onClick={() => dropSub(s)}>×</button>
+                  </>
+                ) : (s.owner && <Avatar name={s.owner} size={20} />)}
               </div>
             )) : <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No sub-tasks. Break the work down if more than one person is involved.</p>}
             {can('assignments.edit') && (
@@ -181,7 +201,8 @@ export default function AssignmentDetail() {
                 <input type="checkbox" checked={Number(c.is_done) === 1} onChange={() => toggleChk(c)}
                   disabled={!can('assignments.edit')} style={{ width: 'auto' }} />
                 <span style={{ flex: 1, textDecoration: Number(c.is_done) === 1 ? 'line-through' : 'none', color: Number(c.is_done) === 1 ? 'var(--muted)' : 'inherit', fontSize: 13 }}>{c.item_text}</span>
-                {can('assignments.edit') && <button className="btn" style={{ padding: '0 7px' }} onClick={() => dropChk(c)}>×</button>}
+                {can('assignments.edit') && <button className="btn" style={{ padding: '0 7px' }} title="Rename" onClick={() => renameChk(c)}>✎</button>}
+                {can('assignments.edit') && <button className="btn" style={{ padding: '0 7px' }} title="Delete" onClick={() => dropChk(c)}>×</button>}
               </div>
             )) : <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>No checklist items yet.</p>}
             {can('assignments.edit') && (

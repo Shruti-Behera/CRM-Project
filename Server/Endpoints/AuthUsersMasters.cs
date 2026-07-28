@@ -86,12 +86,20 @@ public static class UserEndpoints
 {
     public static void Map(WebApplication app)
     {
+        /* Roles, for the user form's access-level picker. */
+        app.MapGet("/api/roles", async (HttpContext ctx, Db db) =>
+        {
+            ((CurrentUser)ctx.Items["user"]!).Require("users.view");
+            return Results.Json(await db.Q("SELECT id, name, slug, level, scope FROM roles ORDER BY level"));
+        });
+
         app.MapGet("/api/users", async (HttpContext ctx, Db db) =>
         {
             ((CurrentUser)ctx.Items["user"]!).Require("users.view");
             return Results.Json(await db.Q("""
                 SELECT u.id, u.employee_code, u.name, u.email, u.mobile, u.designation, u.status,
-                       u.weekly_capacity_hours, r.name AS role, r.level, r.scope,
+                       u.weekly_capacity_hours, u.role_id, u.department_id, u.division_id, u.manager_id,
+                       r.name AS role, r.level, r.scope,
                        d.name AS department, dv.name AS division, m.name AS manager,
                        (SELECT COUNT(*) FROM assignments a
                          WHERE a.assigned_to = u.id AND a.status <> 'Completed') AS open_work,

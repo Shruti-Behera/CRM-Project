@@ -313,6 +313,47 @@ public static class InstitutionEndpoints
                 $"{b.Str("visit_type")}{(person is not null ? $" with {person}" : "")}");
             return Results.Json(new { id = visitId }, statusCode: 201);
         });
+
+        /* PUT /api/institutions/visits/{id} — edit a logged interaction. */
+        app.MapPut("/api/institutions/visits/{id:long}", async (HttpContext ctx, Db db, long id, B b) =>
+        {
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("institutional.edit");
+
+            await db.Tx<int>(async (conn, tx) =>
+            {
+                var n = await conn.ExecuteAsync("""
+                    UPDATE client_visits
+                       SET visit_date = CAST(@date AS date), visit_type = @type, met_person = @person,
+                           city = @city, agenda = @agenda, outcome = @outcome, interest = @interest,
+                           follow_up_on = CAST(@followUp AS date)
+                     WHERE id = @id
+                    """, new
+                {
+                    date = b.Str("visit_date"),
+                    type = b.Str("visit_type"),
+                    person = b.OptStr("met_person"),
+                    city = b.OptStr("city"),
+                    agenda = b.OptStr("agenda"),
+                    outcome = b.OptStr("outcome"),
+                    interest = b.Choice("interest", ["High", "Medium", "Low"], "Medium"),
+                    followUp = b.OptStr("follow_up_on"),
+                    id
+                }, tx);
+                if (n == 0) throw AppException.NotFound();
+
+                await conn.ExecuteAsync("DELETE FROM client_visit_stocks WHERE visit_id = @id", new { id }, tx);
+                foreach (var symbol in b.StrArray("stocks")
+                             .Select(x => x.Trim().ToUpperInvariant()).Where(x => x.Length > 0).Distinct())
+                    await conn.ExecuteAsync(
+                        "INSERT INTO client_visit_stocks (visit_id, symbol) VALUES (@id, @symbol)",
+                        new { id, symbol }, tx);
+                return 0;
+            });
+
+            await Audit.LogActivity(db, ctx, "institution", 0, "visit_edited", $"Interaction updated: {b.Str("visit_type")}");
+            return Results.Json(new { ok = true });
+        });
     }
 }
 

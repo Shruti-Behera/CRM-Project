@@ -29,6 +29,7 @@ export default function Opportunities() {
           <button className="btn" onClick={() => setOpenOnly(o => !o)}>
             {openOnly ? 'Showing live' : 'Showing all'}
           </button>
+          <Link className="btn" to="/banking/board">Board</Link>
         </div>
       </div>
 
