@@ -1,7 +1,3 @@
-/* =====================================================================
-   Research reports for the institutional desk. Backs the Reports tab and
-   the report-driven charts on the institutional dashboard.
-   ===================================================================== */
 using System.Text.Json;
 using AshikaWdm.Infrastructure;
 using Dapper;

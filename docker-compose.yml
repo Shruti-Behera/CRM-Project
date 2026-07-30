@@ -1,0 +1,49 @@
+# =====================================================================
+#  Ashika WDM — the whole app in one place: the web app + API in one
+#  container, PostgreSQL in another. Values come from a .env file next to
+#  this one (copy .env.example -> .env and fill it in).
+#
+#  Start:   docker compose up -d --build
+#  Admin:   docker compose run --rm app create-admin
+#  Open:    http://<server-ip>:8080
+# =====================================================================
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ashika_wdm
+      POSTGRES_USER: ashika
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # schema + seed run automatically the first time the database is created
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ashika -d ashika_wdm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # .NET reads these as config (double underscore = section separator)
+      ConnectionStrings__Db: "Host=db;Port=5432;Database=ashika_wdm;Username=ashika;Password=${DB_PASSWORD};Maximum Pool Size=20"
+      Jwt__Secret: ${JWT_SECRET}
+      Jwt__ExpiryHours: "8"
+      Uploads__Dir: "/app/storage/uploads"
+      Uploads__MaxMb: "15"
+    volumes:
+      - uploads:/app/storage/uploads
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  uploads:

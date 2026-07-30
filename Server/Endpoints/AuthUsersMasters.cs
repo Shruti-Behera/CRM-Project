@@ -64,6 +64,32 @@ public static class AuthEndpoints
       });
   });
 
+        /* Self-service reset request. There is no SMTP here, so rather than
+           email a link we notify the Super Admins and log it — they reset the
+           password from Users & rights. Always answers the same way so the
+           form never reveals whether an account exists. */
+        app.MapPost("/api/auth/forgot", async (HttpContext ctx, Db db, B body) =>
+        {
+            var identifier = body.Str("identifier");
+            var user = await db.One(
+                "SELECT id, name, email FROM users WHERE email = @id OR employee_code = @id",
+                new { id = identifier });
+            if (user is not null)
+            {
+                var admins = await db.Q(
+                    "SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.level = 1 AND u.status = 'Active'");
+                foreach (var a in admins)
+                    await Audit.Notify(db, (int)a.id, "Password reset", "Password reset requested",
+                        $"{(string)user.name} ({(string)user.email}) has asked for a password reset.",
+                        "user", (long)(int)user.id);
+                await db.Exec("""
+                    INSERT INTO activity_logs (entity_type, entity_id, user_id, action, description, ip_address)
+                    VALUES ('user', @uid, @uid, 'password_reset_requested', 'Password reset requested', @ip)
+                    """, new { uid = (int)user.id, ip = ctx.Connection.RemoteIpAddress?.ToString() });
+            }
+            return Results.Json(new { ok = true });
+        }).RequireRateLimiting("login");
+
         app.MapPost("/api/auth/change-password", async (HttpContext ctx, Db db, B body) =>
         {
             var u = (CurrentUser)ctx.Items["user"]!;

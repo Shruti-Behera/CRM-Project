@@ -1,0 +1,10 @@
+**/node_modules
+**/bin
+**/obj
+client/dist
+Server/wwwroot
+.git
+.env
+*.md
+docs
+deploy

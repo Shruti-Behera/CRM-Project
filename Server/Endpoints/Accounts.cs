@@ -1,8 +1,3 @@
-/* =====================================================================
-   Banking accounts — the client and counterparty master. Ported to the
-   server from the prototype's Accounts screen. Scope mirrors the banking
-   rule: level 1/2 see all, level 3 their team/division, level 4 their own.
-   ===================================================================== */
 using System.Text.Json;
 using AshikaWdm.Infrastructure;
 using Dapper;

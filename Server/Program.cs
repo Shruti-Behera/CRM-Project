@@ -104,7 +104,8 @@ app.UseRateLimiter();
 app.Use(async (ctx, next) =>
 {
     var path = ctx.Request.Path.Value ?? "";
-    var open = path == "/api/health" || path == "/api/auth/login" || !path.StartsWith("/api/");
+    var open = path == "/api/health" || path == "/api/auth/login" || path == "/api/auth/forgot"
+               || !path.StartsWith("/api/");
     if (!open)
     {
         var header = ctx.Request.Headers.Authorization.ToString();

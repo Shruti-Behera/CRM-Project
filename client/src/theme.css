@@ -22,10 +22,11 @@ a{color:var(--navy)}
 .shell{display:grid;grid-template-columns:244px 1fr;min-height:100vh}
 .sidebar{background:linear-gradient(180deg,#23408E 0%,#1A2F6B 55%,#16264F 100%);
   color:#B6C2DC;position:sticky;top:0;height:100vh;overflow:auto}
-.brand{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.10);color:#fff;display:flex;align-items:center;gap:10px}
-.brand img{width:34px;height:34px;border-radius:7px;object-fit:cover;background:#fff;padding:2px}
-.brand .nm{font-weight:700;font-size:17px;letter-spacing:.01em;line-height:1}
-.brand .sb{font-size:10px;color:#8FA0C4;letter-spacing:.06em;text-transform:uppercase;margin-top:3px}
+.brand{padding:16px 16px 14px;border-bottom:1px solid rgba(255,255,255,.10);color:#fff}
+.brand img{display:block;height:30px;width:auto;max-width:170px;object-fit:contain;
+  background:#fff;border-radius:6px;padding:4px 7px}
+.brand .sb{font-size:9.5px;color:#8FA0C4;letter-spacing:.14em;text-transform:uppercase;margin-top:8px}
+.brand .nm{display:none}
 .ws button .ic{display:inline-block;width:20px;text-align:center;margin-right:7px;font-size:13px}
 .ws button small{display:block;font-size:10px;opacity:.72}
 .navlink{display:flex;justify-content:space-between;align-items:center}
@@ -107,10 +108,25 @@ label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.07em
   font-weight:600;margin-bottom:4px}
 .prog{height:5px;background:#EAEEF4;border-radius:4px;overflow:hidden;min-width:64px}
 .prog i{display:block;height:100%;background:var(--ray)}
-.login{min-height:100vh;display:grid;place-items:center;
+.login{min-height:100vh;display:grid;place-items:center;padding:20px;
   background:linear-gradient(135deg,#16264F 0%,#23408E 55%,#1DB5B6 160%)}
 .login .box{background:#fff;border-radius:10px;padding:32px;width:360px;
   box-shadow:0 28px 70px rgba(10,20,50,.4)}
+.login-card{display:flex;width:min(900px,100%);background:#fff;border-radius:14px;overflow:hidden;
+  box-shadow:0 28px 70px rgba(10,20,50,.42)}
+.login-aside{flex:1;background:linear-gradient(150deg,#23408E 0%,#1A2F6B 55%,#16264F 100%);color:#fff;
+  padding:34px;display:flex;flex-direction:column;justify-content:space-between;min-width:0}
+.login-aside h2{font-size:24px;line-height:1.25;margin-top:8px;font-weight:600}
+.login-aside p{color:#C1CDE6;font-size:13.5px;margin-top:14px}
+.logo-tile{background:#fff;border-radius:10px;padding:9px 13px;display:inline-block;margin-bottom:18px}
+.logo-tile img{height:40px;display:block}
+.login-stats{display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;
+  font-size:10.5px;color:#A9B8D8;border-top:1px solid rgba(255,255,255,.18);padding-top:14px;margin-top:26px}
+.login-form{flex:1;padding:40px 42px;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.remember{display:flex;align-items:center;gap:6px;font-size:13px;text-transform:none;letter-spacing:0;
+  color:var(--ink);font-weight:400;margin:0}
+.remember input{width:auto}
+@media(max-width:760px){.login-aside{display:none}}
 .err{background:#FBE5E3;color:#9E2F27;padding:8px 12px;border-radius:6px;font-size:12.5px;margin-bottom:12px}
 
 /* chips, tags, avatars — shared small UI carried over from the prototype */
@@ -151,3 +167,9 @@ label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.07em
 .bar-row{display:flex;align-items:center;gap:10px;padding:6px 0}
 .bar-track{height:9px;background:#EDF1F7;border-radius:5px;overflow:hidden;flex:1}
 .bar-track i{display:block;height:100%;border-radius:5px}
+.rank{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);width:20px;flex:none}
+
+/* pipeline funnel */
+.funnel-row{display:flex;align-items:center;gap:10px;padding:4px 0}
+.funnel-bar{height:22px;border-radius:5px;color:#fff;display:flex;align-items:center;padding:0 8px;
+  font-size:11px;font-weight:600;min-width:8%;white-space:nowrap}
