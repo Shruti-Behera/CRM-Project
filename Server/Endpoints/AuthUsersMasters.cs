@@ -175,19 +175,28 @@ public static class AuthEndpoints
             return Results.Json(new { ok = true });
         }).RequireRateLimiting("login");
 
+        /* Change your own password while signed in. Verifies the current password,
+           applies the same policy used elsewhere (>= 8 chars, must differ), updates
+           the PBKDF2 hash, records an audit entry and sends a confirming notice.
+           Independent of the email-based forgot/reset flow above. */
         app.MapPost("/api/auth/change-password", async (HttpContext ctx, Db db, B body) =>
         {
             var u = (CurrentUser)ctx.Items["user"]!;
             var current = body.Str("current");
             var next = body.Str("next");
-            if (next.Length < 8) throw AppException.BadRequest("The new password needs at least 8 characters");
 
             var row = await db.One("SELECT password_hash FROM users WHERE id = @id", new { id = u.Id });
             if (!Passwords.Verify(current, (string)row!.password_hash))
                 throw AppException.BadRequest("The current password is wrong");
+            if (next.Length < 8) throw AppException.BadRequest("The new password needs at least 8 characters");
+            if (next == current) throw AppException.BadRequest("The new password must be different from your current one");
 
             await db.Exec("UPDATE users SET password_hash = @h WHERE id = @id",
                 new { h = Passwords.Hash(next), id = u.Id });
+
+            await Audit.LogActivity(db, ctx, "user", u.Id, "password_changed", "Changed their password");
+            await Audit.Notify(db, u.Id, "Security", "Password changed",
+                "Your password was just changed. If this wasn't you, tell a Super Admin now.", "user", (long)u.Id);
             return Results.Json(new { ok = true });
         });
     }
