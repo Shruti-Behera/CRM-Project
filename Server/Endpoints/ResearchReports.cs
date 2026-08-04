@@ -83,7 +83,8 @@ public static class ResearchReportEndpoints
 
         app.MapPatch("/api/research-reports/{id:int}", async (HttpContext ctx, Db db, int id, B b) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("research.edit");
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("research.edit");
             var status = b.Choice("status", ["Draft", "Published"], "Draft");
             await db.Exec("""
                 UPDATE research_reports
@@ -92,6 +93,13 @@ public static class ResearchReportEndpoints
                  WHERE id = @id
                 """, new { status, id });
             await Audit.LogActivity(db, ctx, "research_report", id, "status", $"Report {status.ToLowerInvariant()}");
+            if (status == "Published")
+            {
+                var r = await db.One("SELECT analyst_id, title FROM research_reports WHERE id = @id", new { id });
+                if (r is not null && (int)r.analyst_id != u.Id)
+                    await Audit.Notify(db, (int)r.analyst_id, "Research", "Your report was published",
+                        $"\"{(string)r.title}\" is now live to clients.", "research_report", id, u.Id);
+            }
             return Results.Json(new { ok = true });
         });
     }

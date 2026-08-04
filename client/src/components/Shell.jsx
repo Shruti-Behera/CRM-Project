@@ -1,7 +1,8 @@
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate, Link } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../lib/auth.jsx';
-import { get, post } from '../lib/api.js';
+import { get } from '../lib/api.js';
+import { useNotifications, notificationPath } from '../lib/notifications.jsx';
 import { ini } from './Bits.jsx';
 
 // Each nav item: [path, label, countKey?]. countKey maps to /api/nav-counts.
@@ -36,6 +37,7 @@ const NAV = {
                    ['/internal/timelog', 'Time log']]],
       ['Schedule', [['/internal/meetings', 'Meetings'], ['/internal/calendar', 'Calendar'],
                     ['/internal/emails', 'Emails']]],
+      ['Insight', [['/notifications', 'Notifications', 'notifications']]],
       ['Masters', [['/users', 'Users & rights'], ['/masters', 'Category & project'],
                    ['/departments', 'Departments'], ['/data-backup', 'Data & backup'],
                    ['/settings', 'Settings']]]
@@ -63,22 +65,20 @@ export default function Shell({ children }) {
   const [counts, setCounts] = useState({});
   const [q, setQ] = useState('');
   const [results, setResults] = useState([]);
-  const [notif, setNotif] = useState({ unread: 0, items: [] });
   const [menu, setMenu] = useState(null);         // 'notif' | 'profile' | null
   const searchRef = useRef(null);
 
+  // Notifications come from the real-time context (SSE); counters still poll.
+  const { items: notifItems, unread, total: notifTotal, refresh: refreshNotif,
+          loadMore: loadMoreNotif, markRead, markAll, remove: removeNotif, clearAll } = useNotifications();
+
   useEffect(() => { setWs(current); }, [current]);
 
-  const loadShell = () => {
-    get('/nav-counts').then(setCounts).catch(() => {});
-    get('/notifications').then(setNotif).catch(() => {});
-  };
   useEffect(() => {
-    loadShell();
-    const t = setInterval(loadShell, 20000);          // near real-time notifications + counters
-    const onFocus = () => loadShell();                 // refresh the moment you return to the tab
-    window.addEventListener('focus', onFocus);
-    return () => { clearInterval(t); window.removeEventListener('focus', onFocus); };
+    const loadCounts = () => get('/nav-counts').then(setCounts).catch(() => {});
+    loadCounts();
+    const t = setInterval(loadCounts, 20000);
+    return () => clearInterval(t);
   }, []);
 
   // debounced global search
@@ -90,7 +90,12 @@ export default function Shell({ children }) {
 
   const switchWs = (key) => { setWs(key); setOpen(false); nav(NAV[key].home); };
   const goResult = (r) => { setQ(''); setResults([]); nav((SEARCH_PATH[r.kind] || (() => '/'))(r)); };
-  const markRead = async () => { try { await post('/notifications/read', {}); loadShell(); } catch { /* noop */ } };
+  const openNotif = (n) => {
+    if (Number(n.is_read) === 0) markRead(n.id);
+    const to = notificationPath(n);
+    setMenu(null);
+    if (to) nav(to);
+  };
 
   return (
     <div className="shell">
@@ -151,24 +156,37 @@ export default function Shell({ children }) {
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{ position: 'relative' }}>
               <button className="icon-btn" title="Notifications"
-                onClick={(e) => { e.stopPropagation(); setMenu(m => m === 'notif' ? null : 'notif'); }}>
-                🔔{notif.unread > 0 && <span className="dot">{notif.unread}</span>}
+                onClick={(e) => { e.stopPropagation(); setMenu(m => m === 'notif' ? null : 'notif'); if (menu !== 'notif') refreshNotif(); }}>
+                🔔{unread > 0 && <span className="dot">{unread > 99 ? '99+' : unread}</span>}
               </button>
               {menu === 'notif' && (
-                <div className="menu" style={{ minWidth: 320 }} onClick={e => e.stopPropagation()}>
+                <div className="menu" style={{ minWidth: 340 }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
-                    <b style={{ fontSize: 13 }}>Notifications</b>
-                    {notif.unread > 0 && <button className="btn" style={{ padding: '2px 8px' }} onClick={markRead}>Mark all read</button>}
+                    <b style={{ fontSize: 13 }}>Notifications{unread > 0 ? ` · ${unread} new` : ''}</b>
+                    <span style={{ display: 'flex', gap: 6 }}>
+                      {unread > 0 && <button className="btn" style={{ padding: '2px 8px' }} onClick={markAll}>Mark all read</button>}
+                      {notifItems.length > 0 && <button className="btn" style={{ padding: '2px 8px', color: 'var(--red)' }} onClick={clearAll}>Clear all</button>}
+                    </span>
                   </div>
-                  <div style={{ maxHeight: 340, overflow: 'auto' }}>
-                    {notif.items.length ? notif.items.slice(0, 20).map(n => (
-                      <div key={n.id} style={{ padding: '9px 14px', borderBottom: '1px solid #F2F4F8', background: Number(n.is_read) === 0 ? '#F5F9FF' : '#fff' }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600 }}>{n.title}</div>
-                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>{n.message}</div>
-                        <div className="mono" style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2 }}>{n.created_at}</div>
+                  <div style={{ maxHeight: 380, overflow: 'auto' }}>
+                    {notifItems.length ? notifItems.map(n => (
+                      <div key={n.id} className="notif-row" style={{ background: Number(n.is_read) === 0 ? '#F5F9FF' : '#fff' }}>
+                        <span className="notif-dot" style={{ background: Number(n.is_read) === 0 ? 'var(--cyan)' : 'transparent' }} />
+                        <div style={{ flex: 1, minWidth: 0, cursor: notificationPath(n) ? 'pointer' : 'default' }} onClick={() => openNotif(n)}>
+                          <div style={{ fontSize: 12.5, fontWeight: 600 }}>{n.title}</div>
+                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>{n.message}</div>
+                          <div className="mono" style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2 }}>
+                            {n.created_at}{n.sender ? ` · ${n.sender}` : ''}</div>
+                        </div>
+                        <button className="btn" style={{ padding: '0 6px', alignSelf: 'flex-start' }}
+                          title="Delete" onClick={(e) => { e.stopPropagation(); removeNotif(n.id); }}>×</button>
                       </div>
                     )) : <div style={{ padding: 16, fontSize: 13, color: 'var(--muted)', textAlign: 'center' }}>Nothing new.</div>}
+                    {notifItems.length < notifTotal &&
+                      <button className="mi" style={{ textAlign: 'center', color: 'var(--navy)' }} onClick={loadMoreNotif}>Load more</button>}
                   </div>
+                  <Link className="mi" to="/notifications" style={{ textAlign: 'center', borderTop: '1px solid var(--line)' }}
+                    onClick={() => setMenu(null)}>View all notifications</Link>
                 </div>
               )}
             </div>

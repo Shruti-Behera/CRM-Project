@@ -64,6 +64,9 @@ a{color:var(--navy)}
   font:inherit;font-size:13px;cursor:pointer;color:var(--ink);text-decoration:none}
 .menu .mi:hover{background:#F7FAFF}
 .hamburger{display:none;background:none;border:0;font-size:20px;cursor:pointer}
+.notif-row{display:flex;gap:8px;align-items:flex-start;padding:9px 12px 9px 10px;border-bottom:1px solid #F2F4F8}
+.notif-row:hover{background:#F0F6FF !important}
+.notif-dot{width:7px;height:7px;border-radius:50%;flex:none;margin-top:6px}
 .main{padding:20px}
 
 @media (max-width:900px){

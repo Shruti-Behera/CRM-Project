@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./lib/auth.jsx";
+import { NotificationsProvider } from "./lib/notifications.jsx";
 import { Loading } from "./components/Bits.jsx";
 import Login from "./pages/Login.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
@@ -32,6 +33,7 @@ import Users from "./pages/Users.jsx";
 import Departments from "./pages/Departments.jsx";
 import DataBackup from "./pages/DataBackup.jsx";
 import Settings from "./pages/Settings.jsx";
+import Notifications from "./pages/Notifications.jsx";
 import NotBuilt from "./pages/NotBuilt.jsx";
 
 export default function App() {
@@ -50,9 +52,11 @@ export default function App() {
   }
 
   return (
+    <NotificationsProvider>
     <Shell>
       <Routes>
         <Route path="/" element={<Navigate to="/banking" replace />} />
+        <Route path="/notifications" element={<Notifications />} />
         <Route path="/login" element={<Navigate to="/banking" replace />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/banking" element={<BankingDashboard />} />
@@ -96,5 +100,6 @@ export default function App() {
         <Route path="*" element={<NotBuilt />} />
       </Routes>
     </Shell>
+    </NotificationsProvider>
   );
 }

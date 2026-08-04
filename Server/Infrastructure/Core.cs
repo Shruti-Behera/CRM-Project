@@ -335,14 +335,21 @@ public static class Audit
                 ip = ctx.Connection.RemoteIpAddress?.ToString()
             });
 
-    public static Task Notify(Db db, int? userId, string type, string title, string message,
-        string? entityType = null, long? entityId = null) =>
-        userId is null
-            ? Task.CompletedTask
-            : db.Exec("""
-                INSERT INTO notifications (user_id, type, title, message, entity_type, entity_id)
-                VALUES (@userId, @type, @title, @message, @entityType, @entityId)
-                """, new { userId, type, title, message, entityType, entityId });
+    /* Fired with the recipient's user id right after a notification row is
+       written, so the real-time layer can push it to that user's live
+       connections. Wired up in Program.cs. Existing call sites are unchanged. */
+    public static Action<int>? NotifyHook;
+
+    public static async Task Notify(Db db, int? userId, string type, string title, string message,
+        string? entityType = null, long? entityId = null, int? senderId = null)
+    {
+        if (userId is null) return;
+        await db.Exec("""
+            INSERT INTO notifications (user_id, sender_id, type, title, message, entity_type, entity_id)
+            VALUES (@userId, @senderId, @type, @title, @message, @entityType, @entityId)
+            """, new { userId, senderId, type, title, message, entityType, entityId });
+        try { NotifyHook?.Invoke(userId.Value); } catch { /* a push failure must never break the request */ }
+    }
 }
 
 /* ----------------------------------------------- request-body reading */

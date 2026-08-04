@@ -121,6 +121,8 @@ CREATE TABLE users (
   role_id       SMALLINT NOT NULL,
   weekly_capacity_hours DECIMAL(5,2) NOT NULL DEFAULT 40.00,
   status        VARCHAR(60) NOT NULL DEFAULT 'Active' CHECK (status IN ('Active','Inactive')),
+  pref_sound    SMALLINT NOT NULL DEFAULT 1,   -- notification sound on/off
+  pref_desktop  SMALLINT NOT NULL DEFAULT 1,   -- browser desktop notifications on/off
   last_login_at TIMESTAMP NULL,
   created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -670,13 +672,17 @@ CREATE TABLE activity_logs (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ;
 CREATE TABLE notifications (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  user_id INTEGER NOT NULL,
-  type VARCHAR(40) NOT NULL,
+  user_id INTEGER NOT NULL,             -- receiver
+  sender_id INTEGER NULL,               -- who caused it (optional)
+  type VARCHAR(40) NOT NULL,            -- module / category
   title VARCHAR(120) NOT NULL, message VARCHAR(255) NOT NULL,
-  entity_type VARCHAR(30) NULL, entity_id INTEGER NULL,
+  entity_type VARCHAR(30) NULL, entity_id INTEGER NULL,   -- related record
   is_read SMALLINT NOT NULL DEFAULT 0, read_at TIMESTAMP NULL,
+  is_deleted SMALLINT NOT NULL DEFAULT 0,                 -- soft delete
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ;
+  updated_at TIMESTAMP NULL,
+  CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_notif_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL) ;
 -- =====================================================================
 -- indexes hoisted from the table definitions
 CREATE INDEX ix_user_mgr ON users (manager_id);

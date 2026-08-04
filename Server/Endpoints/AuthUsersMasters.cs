@@ -254,6 +254,9 @@ public static class UserEndpoints
             });
 
             await Audit.LogActivity(db, ctx, "user", id, "created", $"Created {b.Str("name")}");
+            await Audit.Notify(db, id, "Account", "Welcome to Ashika WDM",
+                "Your account has been created. Sign in with the credentials your administrator shared.",
+                "user", id, me.Id);
             return Results.Json(new { id }, statusCode: 201);
         });
 
@@ -305,6 +308,12 @@ public static class UserEndpoints
             }
 
             await Audit.LogActivity(db, ctx, "user", id, "updated", "User updated");
+            if (newStatus == "Inactive")
+                await Audit.Notify(db, id, "Account", "Account deactivated",
+                    "Your account has been set to inactive. Contact a Super Admin if this is unexpected.", "user", id, me.Id);
+            else if (!string.IsNullOrEmpty(pw))
+                await Audit.Notify(db, id, "Security", "Password changed",
+                    "An administrator changed your password.", "user", id, me.Id);
             return Results.Json(new { ok = true });
         });
 

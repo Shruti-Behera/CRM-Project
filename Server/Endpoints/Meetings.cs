@@ -114,18 +114,34 @@ public static class MeetingEndpoints
             u.Require("assignments.create");
 
             var status = b.Choice("status", ["Scheduled", "Completed", "Cancelled"], "Scheduled");
+            var title = await db.Scalar<string>("SELECT title FROM meetings WHERE id = @id", new { id });
             await db.Exec("UPDATE meetings SET status = @status, minutes = @minutes WHERE id = @id",
                 new { status, minutes = b.OptStr("minutes"), id });
             await Audit.LogActivity(db, ctx, "meeting", id, "updated", $"Meeting {status.ToLowerInvariant()}");
+            if (status is "Cancelled" or "Completed")
+            {
+                var parts = await db.Q("SELECT user_id FROM meeting_participants WHERE meeting_id = @id", new { id });
+                foreach (var pt in parts)
+                    if ((int)pt.user_id != u.Id)
+                        await Audit.Notify(db, (int)pt.user_id, "Meeting", $"Meeting {status.ToLowerInvariant()}",
+                            $"\"{title}\" was {status.ToLowerInvariant()}.", "meeting", id, u.Id);
+            }
             return Results.Json(new { ok = true });
         });
 
         app.MapDelete("/api/meetings/{id:int}", async (HttpContext ctx, Db db, int id) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("assignments.create");
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("assignments.create");
+            var title = await db.Scalar<string>("SELECT title FROM meetings WHERE id = @id", new { id });
+            var parts = (await db.Q("SELECT user_id FROM meeting_participants WHERE meeting_id = @id", new { id })).ToList();
             var n = await db.Exec("DELETE FROM meetings WHERE id = @id", new { id });
             if (n == 0) throw AppException.NotFound();
             await Audit.LogActivity(db, ctx, "meeting", id, "deleted", "Meeting removed");
+            foreach (var pt in parts)
+                if ((int)pt.user_id != u.Id)
+                    await Audit.Notify(db, (int)pt.user_id, "Meeting", "Meeting removed",
+                        $"\"{title}\" was cancelled and removed.", "meeting", null, u.Id);
             return Results.Json(new { ok = true });
         });
     }

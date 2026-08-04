@@ -170,6 +170,9 @@ public static class OpportunityEndpoints
             });
 
             await Audit.LogActivity(db, ctx, "opportunity", id, "created", "Opportunity created");
+            if (ownerId != u.Id)
+                await Audit.Notify(db, ownerId, "Opportunity", "New opportunity assigned to you",
+                    "A new pipeline opportunity is now yours.", "opportunity", id, u.Id);
             return Results.Json(new { id }, statusCode: 201);
         });
 

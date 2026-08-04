@@ -309,7 +309,7 @@ public static class AssignmentEndpoints
             u.Require("assignments.edit");
 
             var row = await db.One(
-                "SELECT status, progress_pct FROM assignments WHERE id = @id AND deleted_at IS NULL",
+                "SELECT status, progress_pct, assigned_to, priority, title FROM assignments WHERE id = @id AND deleted_at IS NULL",
                 new { id }) ?? throw AppException.NotFound();
 
             var sets = new List<string>();
@@ -348,6 +348,18 @@ public static class AssignmentEndpoints
             await Audit.LogActivity(db, ctx, "assignment", id, "updated",
                 status is not null ? $"Status changed to {status}" : "Assignment updated",
                 (string?)row.status, status);
+
+            var assignedTo = (int)row.assigned_to;
+            if (assignedTo != u.Id)
+            {
+                if (status is not null && status != (string)row.status)
+                    await Audit.Notify(db, assignedTo, "Assignment",
+                        status == "Completed" ? "Assignment completed" : "Assignment status changed",
+                        $"\"{(string)row.title}\" is now {status}.", "assignment", id, u.Id);
+                else if (b.OptStr("priority") is { } prio2 && prio2 != (string)row.priority)
+                    await Audit.Notify(db, assignedTo, "Assignment", "Priority changed",
+                        $"\"{(string)row.title}\" is now {prio2} priority.", "assignment", id, u.Id);
+            }
             return Results.Json(new { ok = true });
         });
 
@@ -355,7 +367,9 @@ public static class AssignmentEndpoints
            sub-tasks and checklist, matching the prototype's "Mark complete". */
         app.MapPost("/api/assignments/{id:int}/complete", async (HttpContext ctx, Db db, int id) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("assignments.edit");
+            var meta = await db.One("SELECT assigned_by, title FROM assignments WHERE id = @id", new { id });
             await db.Tx<int>(async (conn, tx) =>
             {
                 await conn.ExecuteAsync("""
@@ -370,17 +384,25 @@ public static class AssignmentEndpoints
                 return 0;
             });
             await Audit.LogActivity(db, ctx, "assignment", id, "completed", "Marked complete");
+            if (meta is not null && (int)meta.assigned_by != u.Id)
+                await Audit.Notify(db, (int)meta.assigned_by, "Assignment", "Assignment completed",
+                    $"\"{(string)meta.title}\" has been marked complete.", "assignment", id, u.Id);
             return Results.Json(new { ok = true });
         });
 
         /* DELETE /api/assignments/{id} — soft delete so scope filters hide it. */
         app.MapDelete("/api/assignments/{id:int}", async (HttpContext ctx, Db db, int id) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("assignments.delete");
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("assignments.delete");
+            var meta = await db.One("SELECT assigned_to, title FROM assignments WHERE id = @id AND deleted_at IS NULL", new { id });
             var n = await db.Exec(
                 "UPDATE assignments SET deleted_at = NOW() WHERE id = @id AND deleted_at IS NULL", new { id });
             if (n == 0) throw AppException.NotFound();
             await Audit.LogActivity(db, ctx, "assignment", id, "deleted", "Assignment deleted");
+            if (meta is not null && (int)meta.assigned_to != u.Id)
+                await Audit.Notify(db, (int)meta.assigned_to, "Assignment", "Assignment removed",
+                    $"\"{(string)meta.title}\" was deleted.", "assignment", null, u.Id);
             return Results.Json(new { ok = true });
         });
 
@@ -404,6 +426,12 @@ public static class AssignmentEndpoints
                 await Audit.LogActivity(db, ctx, "assignment", id, "status", $"Status changed to {status}");
             }
             await Audit.LogActivity(db, ctx, "assignment", id, "note_added", "Note added");
+            var noteMeta = await db.One("SELECT assigned_to, assigned_by, title FROM assignments WHERE id = @id", new { id });
+            if (noteMeta is not null)
+                foreach (var recipient in new[] { (int)noteMeta.assigned_to, (int)noteMeta.assigned_by }.Distinct())
+                    if (recipient != u.Id)
+                        await Audit.Notify(db, recipient, "Assignment", "New comment",
+                            $"{u.Name} commented on \"{(string)noteMeta.title}\".", "assignment", id, u.Id);
             return Results.Json(new { ok = true }, statusCode: 201);
         });
 

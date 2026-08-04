@@ -28,6 +28,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<Tokens>();
 builder.Services.AddSingleton<Mailer>();
+builder.Services.AddSingleton<NotifyStream>();
 
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -50,6 +51,9 @@ if (!string.IsNullOrEmpty(corsOrigin))
         p.WithOrigins(corsOrigin.Split(',')).AllowAnyHeader().AllowAnyMethod()));
 
 var app = builder.Build();
+
+/* Push new notifications to any live SSE connection for the recipient. */
+Audit.NotifyHook = uid => app.Services.GetRequiredService<NotifyStream>().Publish(uid);
 
 /* ------------------------------------------------- errors become JSON */
 app.Use(async (ctx, next) =>
@@ -107,6 +111,7 @@ app.Use(async (ctx, next) =>
     var path = ctx.Request.Path.Value ?? "";
     var open = path == "/api/health" || path == "/api/auth/login" || path == "/api/auth/forgot"
                || path == "/api/auth/reset" || path == "/api/auth/reset/validate"
+               || path == "/api/notifications/stream"   // SSE authenticates via ?access_token
                || !path.StartsWith("/api/");
     if (!open)
     {

@@ -91,6 +91,7 @@ public static class AccountEndpoints
         {
             var u = (CurrentUser)ctx.Items["user"]!;
             u.Require("accounts.create");
+            var ownerId = b.OptInt("owner_id") ?? u.Id;
             var id = await db.Tx(async (conn, tx) =>
             {
                 var code = await Db.NextNo(conn, tx, "accounts", "account_code", "ACC");
@@ -109,7 +110,7 @@ public static class AccountEndpoints
                     group = b.OptInt("group_id"),
                     sector = b.OptInt("sector_id"),
                     type = b.Choice("account_type", Types, "Corporate"),
-                    owner = b.OptInt("owner_id") ?? u.Id,
+                    owner = ownerId,
                     country = b.OptInt("country_id"),
                     city = b.OptStr("city"),
                     since = b.OptStr("client_since"),
@@ -120,6 +121,9 @@ public static class AccountEndpoints
                 }, tx);
             });
             await Audit.LogActivity(db, ctx, "account", id, "created", $"Account created: {b.Str("name")}");
+            if (ownerId != u.Id)
+                await Audit.Notify(db, ownerId, "Account", "New account assigned to you",
+                    $"{b.Str("name")} was added with you as relationship owner.", "account", id, u.Id);
             return Results.Json(new { id }, statusCode: 201);
         });
 

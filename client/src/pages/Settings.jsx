@@ -3,6 +3,41 @@ import { Link } from 'react-router-dom';
 import { get, post, put, del } from '../lib/api.js';
 import { Card, Empty, Loading, ErrorNote, Modal } from '../components/Bits.jsx';
 import { useAuth } from '../lib/auth.jsx';
+import { useNotifications } from '../lib/notifications.jsx';
+
+const Toggle = ({ on, onChange, label, hint }) => (
+  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F2F4F8' }}>
+    <div><div style={{ fontSize: 13, fontWeight: 500 }}>{label}</div>
+      {hint && <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{hint}</div>}</div>
+    <label style={{ margin: 0, cursor: 'pointer' }}>
+      <input type="checkbox" checked={on} onChange={e => onChange(e.target.checked)} style={{ width: 'auto', transform: 'scale(1.25)' }} />
+    </label>
+  </div>
+);
+
+function MyNotifications() {
+  const { prefs, updatePrefs, requestDesktop } = useNotifications();
+  const perm = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
+  return (
+    <Card title="My notifications">
+      <Toggle on={prefs.sound} onChange={v => updatePrefs({ sound: v })}
+        label="Notification sound" hint="Play a chime when a new notification arrives in real time." />
+      <Toggle on={prefs.desktop} onChange={v => updatePrefs({ desktop: v })}
+        label="Desktop notifications" hint="Show a browser pop-up even when this tab isn't focused." />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10 }}>
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+          Browser permission: {perm === 'unsupported' ? 'not supported'
+            : perm === 'granted' ? 'granted' : perm === 'denied' ? 'blocked (change it in your browser)' : 'not asked yet'}
+        </span>
+        {perm !== 'granted' && perm !== 'unsupported' && perm !== 'denied' &&
+          <button className="btn" onClick={requestDesktop}>Enable desktop</button>}
+      </div>
+      <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '8px 0 0' }}>
+        Saved to your profile, so it follows you across devices.
+      </p>
+    </Card>
+  );
+}
 
 const softGet = (p) => get(p).then(r => r || []).catch(() => []);
 const todayIso = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
@@ -90,6 +125,9 @@ export default function Settings() {
         {admin && <button className="btn primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : saved ? 'Saved ✓' : 'Save changes'}</button>}
       </div>
       {err && <ErrorNote>{err}</ErrorNote>}
+
+      <div style={{ marginBottom: 14 }}><MyNotifications /></div>
+
       {!admin && <p style={{ fontSize: 12.5, color: 'var(--muted)' }}>Only a Super Admin can change these settings.</p>}
 
       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 14 }}>
