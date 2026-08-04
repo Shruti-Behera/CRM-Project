@@ -33,3 +33,7 @@ C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\refint\A
 C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\AshikaWdm.pdb
 C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\AshikaWdm.genruntimeconfig.cache
 C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\ref\AshikaWdm.dll
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\obj\Debug\net8.0\AshikaWdm.sourcelink.json
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\bin\Debug\net8.0\BouncyCastle.Cryptography.dll
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\bin\Debug\net8.0\MailKit.dll
+C:\Users\shrut\Downloads\ashika-dotnet-postgres\Server\bin\Debug\net8.0\MimeKit.dll

@@ -27,6 +27,7 @@ builder.Services.AddSingleton(sp =>
         ?? throw new InvalidOperationException("ConnectionStrings:Db is not configured")));
 builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<Tokens>();
+builder.Services.AddSingleton<Mailer>();
 
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -105,6 +106,7 @@ app.Use(async (ctx, next) =>
 {
     var path = ctx.Request.Path.Value ?? "";
     var open = path == "/api/health" || path == "/api/auth/login" || path == "/api/auth/forgot"
+               || path == "/api/auth/reset" || path == "/api/auth/reset/validate"
                || !path.StartsWith("/api/");
     if (!open)
     {

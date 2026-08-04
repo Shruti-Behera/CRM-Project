@@ -142,6 +142,16 @@ CREATE TABLE user_permissions (
   PRIMARY KEY (user_id, permission_id),
   CONSTRAINT fk_up_user FOREIGN KEY (user_id)       REFERENCES users(id)       ON DELETE CASCADE,
   CONSTRAINT fk_up_perm FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE) ;
+/* single-use, time-limited password reset tokens (only the SHA-256 hash is stored) */
+CREATE TABLE password_resets (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id    INTEGER NOT NULL,
+  token_hash VARCHAR(128) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  used_at    TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_pwreset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ;
+CREATE INDEX ix_pwreset_token ON password_resets (token_hash);
 CREATE TABLE countries (
   id        INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   name      VARCHAR(80) NOT NULL,

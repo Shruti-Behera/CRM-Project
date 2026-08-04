@@ -73,7 +73,13 @@ export default function Shell({ children }) {
     get('/nav-counts').then(setCounts).catch(() => {});
     get('/notifications').then(setNotif).catch(() => {});
   };
-  useEffect(() => { loadShell(); const t = setInterval(loadShell, 60000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    loadShell();
+    const t = setInterval(loadShell, 20000);          // near real-time notifications + counters
+    const onFocus = () => loadShell();                 // refresh the moment you return to the tab
+    window.addEventListener('focus', onFocus);
+    return () => { clearInterval(t); window.removeEventListener('focus', onFocus); };
+  }, []);
 
   // debounced global search
   useEffect(() => {

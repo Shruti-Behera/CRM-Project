@@ -31,7 +31,7 @@ export default function Login() {
     setErr(""); setBusy(true);
     try {
       await post("/auth/forgot", { identifier });
-      setNote("If that account exists, your administrator has been notified to reset the password.");
+      setNote("If that account exists, a password reset link has been emailed to you. It expires in one hour.");
     } catch (ex) { setErr(ex.message); }
     finally { setBusy(false); }
   };

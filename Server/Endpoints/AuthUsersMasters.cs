@@ -2,6 +2,8 @@
    Sign-in, the signed-in user, user administration and the masters.
    Ported from routes/auth.js, routes/users.js and routes/masters.js.
    ===================================================================== */
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using AshikaWdm.Infrastructure;
 using Dapper;
@@ -64,29 +66,112 @@ public static class AuthEndpoints
       });
   });
 
-        /* Self-service reset request. There is no SMTP here, so rather than
-           email a link we notify the Super Admins and log it — they reset the
-           password from Users & rights. Always answers the same way so the
-           form never reveals whether an account exists. */
-        app.MapPost("/api/auth/forgot", async (HttpContext ctx, Db db, B body) =>
+        /* Forgot password — generates a single-use, one-hour token, stores only
+           its SHA-256 hash, and emails the user a reset link. Always answers the
+           same way so the form never reveals whether an account exists. */
+        app.MapPost("/api/auth/forgot", async (HttpContext ctx, Db db, Mailer mailer, IConfiguration cfg, B body) =>
         {
             var identifier = body.Str("identifier");
-            var user = await db.One(
-                "SELECT id, name, email FROM users WHERE email = @id OR employee_code = @id",
-                new { id = identifier });
+            var user = await db.One("""
+                SELECT id, name, email FROM users
+                 WHERE (email = @id OR employee_code = @id) AND status = 'Active'
+                """, new { id = identifier });
+
             if (user is not null)
             {
-                var admins = await db.Q(
-                    "SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.level = 1 AND u.status = 'Active'");
-                foreach (var a in admins)
-                    await Audit.Notify(db, (int)a.id, "Password reset", "Password reset requested",
-                        $"{(string)user.name} ({(string)user.email}) has asked for a password reset.",
-                        "user", (long)(int)user.id);
+                var raw = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));   // 64 hex chars
+                var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
+
+                // one live token per user — retire any earlier unused ones
+                await db.Exec(
+                    "UPDATE password_resets SET used_at = NOW() WHERE user_id = @uid AND used_at IS NULL",
+                    new { uid = (int)user.id });
+                await db.Exec("""
+                    INSERT INTO password_resets (user_id, token_hash, expires_at)
+                    VALUES (@uid, @hash, NOW() + INTERVAL '1 hour')
+                    """, new { uid = (int)user.id, hash = tokenHash });
+
+                var baseUrl = (cfg["App:BaseUrl"]?.TrimEnd('/'))
+                    ?? $"{ctx.Request.Scheme}://{ctx.Request.Host}";
+                var link = $"{baseUrl}/reset-password?token={raw}";
+                var name = (string)user.name;
+                var html = $"""
+                    <div style="font-family:Arial,sans-serif;font-size:14px;color:#1A2233">
+                      <p>Hi {System.Net.WebUtility.HtmlEncode(name)},</p>
+                      <p>We received a request to reset your Ashika WDM password. Click the button below
+                         to choose a new one. This link expires in <b>one hour</b> and can be used once.</p>
+                      <p style="margin:22px 0">
+                        <a href="{link}" style="background:#23408E;color:#fff;text-decoration:none;
+                           padding:11px 20px;border-radius:6px;display:inline-block">Reset your password</a></p>
+                      <p style="font-size:12.5px;color:#69748A">Or paste this link into your browser:<br>{link}</p>
+                      <p style="font-size:12.5px;color:#69748A">If you didn't ask for this, you can ignore this email —
+                         your password stays the same.</p>
+                    </div>
+                    """;
+                try
+                {
+                    await mailer.SendAsync((string)user.email, "Reset your Ashika WDM password", html);
+                }
+                catch (Exception ex)
+                {
+                    app.Logger.LogError(ex, "Password reset email to {Email} failed", (string)user.email);
+                }
+
                 await db.Exec("""
                     INSERT INTO activity_logs (entity_type, entity_id, user_id, action, description, ip_address)
-                    VALUES ('user', @uid, @uid, 'password_reset_requested', 'Password reset requested', @ip)
+                    VALUES ('user', @uid, @uid, 'password_reset_requested', 'Password reset link emailed', @ip)
                     """, new { uid = (int)user.id, ip = ctx.Connection.RemoteIpAddress?.ToString() });
             }
+            return Results.Json(new { ok = true });
+        }).RequireRateLimiting("login");
+
+        /* Check a token before showing the reset form. */
+        app.MapGet("/api/auth/reset/validate", async (HttpContext ctx, Db db) =>
+        {
+            var token = ctx.Request.Query["token"].ToString();
+            if (string.IsNullOrWhiteSpace(token)) return Results.Json(new { valid = false });
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+            var live = await db.Scalar<long>("""
+                SELECT COUNT(*) FROM password_resets
+                 WHERE token_hash = @hash AND used_at IS NULL AND expires_at > NOW()
+                """, new { hash });
+            return Results.Json(new { valid = live > 0 });
+        });
+
+        /* Set the new password from a valid reset token. */
+        app.MapPost("/api/auth/reset", async (HttpContext ctx, Db db, B body) =>
+        {
+            var token = body.Str("token");
+            var password = body.Str("password");
+            if (password.Length < 8) throw AppException.BadRequest("The new password needs at least 8 characters");
+
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+            var row = await db.One("""
+                SELECT pr.id, pr.user_id, u.name, u.email
+                  FROM password_resets pr JOIN users u ON u.id = pr.user_id
+                 WHERE pr.token_hash = @hash AND pr.used_at IS NULL AND pr.expires_at > NOW()
+                """, new { hash })
+                ?? throw AppException.BadRequest("This reset link is invalid or has expired. Request a new one.");
+
+            var uid = (int)row.user_id;
+            await db.Tx<int>(async (conn, tx) =>
+            {
+                await conn.ExecuteAsync("UPDATE users SET password_hash = @h WHERE id = @uid",
+                    new { h = Passwords.Hash(password), uid }, tx);
+                // consume this token and invalidate any other live ones for the user
+                await conn.ExecuteAsync(
+                    "UPDATE password_resets SET used_at = NOW() WHERE user_id = @uid AND used_at IS NULL",
+                    new { uid }, tx);
+                return 0;
+            });
+
+            await db.Exec("""
+                INSERT INTO activity_logs (entity_type, entity_id, user_id, action, description, ip_address)
+                VALUES ('user', @uid, @uid, 'password_reset', 'Password reset via email link', @ip)
+                """, new { uid, ip = ctx.Connection.RemoteIpAddress?.ToString() });
+            await Audit.Notify(db, uid, "Security", "Password changed",
+                "Your password was just reset. If this wasn't you, tell a Super Admin now.", "user", (long)uid);
+
             return Results.Json(new { ok = true });
         }).RequireRateLimiting("login");
 

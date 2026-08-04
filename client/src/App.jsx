@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./lib/auth.jsx";
 import { Loading } from "./components/Bits.jsx";
 import Login from "./pages/Login.jsx";
+import ResetPassword from "./pages/ResetPassword.jsx";
 import Shell from "./components/Shell.jsx";
 import BankingDashboard from "./pages/BankingDashboard.jsx";
 import Accounts from "./pages/Accounts.jsx";
@@ -42,6 +43,7 @@ export default function App() {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -52,6 +54,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/banking" replace />} />
         <Route path="/login" element={<Navigate to="/banking" replace />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/banking" element={<BankingDashboard />} />
         <Route path="/banking/accounts" element={<Accounts />} />
         <Route path="/banking/board" element={<PipelineBoard />} />
