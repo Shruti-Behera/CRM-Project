@@ -42,7 +42,7 @@ export default function Login() {
         <div className="login-aside">
           <div>
             <div className="logo-tile"><img src="/logo-login.jpg" alt="Ashika" /></div>
-            <h2>Deals and internal work,<br />on one desk.</h2>
+            <h2>Ashika Pulse</h2>
             <p>
               Track accounts, opportunities and mandates on the banking side. Track assignments,
               approvals and meetings on the internal side. Same login, same people, one record of what happened.

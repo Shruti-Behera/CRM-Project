@@ -91,7 +91,7 @@ CREATE TABLE roles (
   id         SMALLINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   name       VARCHAR(40) NOT NULL,
   slug       VARCHAR(40) NOT NULL,
-  level      SMALLINT NOT NULL,     -- 1 super admin … 4 executive
+  level      SMALLINT NOT NULL,     -- 1 super admin, 2 management, 3 head/hod, 4 manager, 5 executive
   scope      VARCHAR(60) NOT NULL DEFAULT 'own' CHECK (scope IN ('all','team','own')),
   CONSTRAINT uq_role_slug UNIQUE (slug)) ;
 CREATE TABLE permissions (

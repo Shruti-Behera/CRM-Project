@@ -4,11 +4,15 @@
 --  The admin password below is 'ChangeMe#2026' — change it immediately.
 -- =====================================================================
 
+-- Five-tier hierarchy. The slug 'director' is retained for the Head / HOD role
+-- (renamed from the former 'Head / Director') so existing assignments and
+-- role_permissions carry over unchanged on databases that ran the migration.
 INSERT INTO roles (name, slug, level, scope) VALUES
  ('Super Admin','super-admin',1,'all'),
- ('Head / Director','director',2,'all'),
- ('Manager','manager',3,'team'),
- ('Executive','executive',4,'own');
+ ('Management','management',2,'all'),
+ ('Head / HOD','director',3,'all'),
+ ('Manager','manager',4,'team'),
+ ('Executive','executive',5,'own');
 
 INSERT INTO departments (code, name) VALUES
  ('IB','Investment Banking'),('INB','Institutional Broking'),('RSH','Research'),
@@ -125,18 +129,25 @@ INSERT INTO permissions (slug, module, action, label) VALUES
  ('reports.view','reports','view','View reports'),
  ('reports.export','reports','export','Export reports');
 
--- level 1 gets everything
+-- level 1 (Super Admin) gets everything
 INSERT INTO role_permissions (role_id, permission_id)
   SELECT (SELECT id FROM roles WHERE level=1), id FROM permissions;
 
--- level 2: everything except user administration and deleting masters
+-- level 2 (Management): everything except the most destructive actions.
+-- User administration is gated separately by the Super-Admin level check.
 INSERT INTO role_permissions (role_id, permission_id)
   SELECT (SELECT id FROM roles WHERE level=2), id FROM permissions
    WHERE slug NOT IN ('masters.delete','accounts.delete');
 
--- level 3: their own patch, and they can decide work approvals
+-- level 3 (Head / HOD): the same broad set the former Head / Director carried,
+-- so existing users of that role keep exactly the permissions they had.
 INSERT INTO role_permissions (role_id, permission_id)
   SELECT (SELECT id FROM roles WHERE level=3), id FROM permissions
+   WHERE slug NOT IN ('masters.delete','accounts.delete');
+
+-- level 4 (Manager): their own patch, and they can decide work approvals
+INSERT INTO role_permissions (role_id, permission_id)
+  SELECT (SELECT id FROM roles WHERE level=4), id FROM permissions
    WHERE slug IN ('accounts.view','accounts.create','accounts.edit',
                   'opportunities.view','opportunities.create','opportunities.edit',
                   'opportunities.move_stage','mandates.view',
@@ -146,9 +157,9 @@ INSERT INTO role_permissions (role_id, permission_id)
                   'workapproval.view','workapproval.create','workapproval.edit','workapproval.approve',
                   'masters.view','users.view','reports.view','reports.export');
 
--- level 4: their own work
+-- level 5 (Executive): their own work
 INSERT INTO role_permissions (role_id, permission_id)
-  SELECT (SELECT id FROM roles WHERE level=4), id FROM permissions
+  SELECT (SELECT id FROM roles WHERE level=5), id FROM permissions
    WHERE slug IN ('accounts.view','opportunities.view','mandates.view',
                   'institutional.view','institutional.create','research.view',
                   'assignments.view','assignments.create','assignments.edit','time.log',

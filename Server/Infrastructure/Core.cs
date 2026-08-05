@@ -202,9 +202,11 @@ public sealed record ScopeSql(string Sql, int[] People, int? DivisionId, int? De
 
 /// <summary>
 /// Who a person can see, expressed once so every list obeys the same rule.
-///   level 1, 2   everything
-///   level 3      own department or division, plus their reporting line
-///   level 4      only what they own, support or watch
+/// Driven by the role's scope (all | team | own), not by the level number, so
+/// re-tiering the hierarchy never changes visibility on its own:
+///   scope 'all'    Super Admin, Management, Head / HOD  — every record
+///   scope 'team'   Manager     — own department or division, plus their reporting line
+///   scope 'own'    Executive   — only what they own, support or watch
 /// The reporting tree walks downwards, so a manager keeps sight of their own
 /// people even when the work sits in another division.
 /// </summary>

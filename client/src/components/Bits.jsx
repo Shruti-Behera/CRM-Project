@@ -20,8 +20,8 @@ export const Pill = ({ kind = 'p-hold', children }) => (
 export const ini = (name = '') =>
   name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
 
-export const Avatar = ({ name, size }) => (
-  <span className="av" title={name}
+export const Avatar = ({ name, size, tone = '' }) => (
+  <span className={`av ${tone}`.trim()} title={name}
     style={size ? { width: size, height: size, fontSize: Math.round(size * 0.4) } : undefined}>
     {ini(name)}
   </span>

@@ -3,13 +3,18 @@ import { get, post, put, del } from '../lib/api.js';
 import { Card, Pill, Avatar, Loading, Empty, ErrorNote, Modal } from '../components/Bits.jsx';
 import { useAuth } from '../lib/auth.jsx';
 
+// Five-tier hierarchy. Level 1 (Super Admin) is the only tier that can
+// administer users; scope decides which records each tier can see.
 const LEVELS = {
-  1: ['Super Admin', 'every record, plus user administration'],
-  2: ['Head / Director', 'every record, no user administration'],
-  3: ['Manager', 'own department or division, plus their reporting line'],
-  4: ['Executive', 'only what they own, support or watch']
+  1: { name: 'Super Admin', scope: 'all',  note: 'Every record, every action, plus user administration' },
+  2: { name: 'Management',  scope: 'all',  note: 'Organisation-wide visibility; cannot manage users' },
+  3: { name: 'Head / HOD',  scope: 'all',  note: 'Every record across all workspaces; cannot manage users' },
+  4: { name: 'Manager',     scope: 'team', note: 'Own department or division, plus their reporting line' },
+  5: { name: 'Executive',   scope: 'own',  note: 'Only records they own, support or watch' }
 };
-const levelTone = (l) => l === 1 ? 'p-red' : l === 2 ? 'p-review' : l === 3 ? 'p-progress' : 'p-hold';
+const LEVEL_KEYS = [1, 2, 3, 4, 5];
+const levelTone = (l) => ({ 1: 'p-red', 2: 'p-review', 3: 'p-progress', 4: 'p-pending', 5: 'p-hold' }[l] || 'p-hold');
+const levelAvTone = (l) => (l === 1 ? '' : l === 2 ? 't' : 'g');   // navy / teal / green, per prototype
 const softGet = (p) => get(p).then(r => r || []).catch(() => []);
 const isOn = (perm) => perm.override != null ? Number(perm.override) === 1 : !!perm.from_role;
 
@@ -45,7 +50,7 @@ export default function Users() {
   /* ---- user add / edit ---- */
   const openAdd = () => setForm({
     _new: true, employee_code: '', name: '', email: '', mobile: '', department_id: '',
-    division_id: '', designation: '', manager_id: '', role_id: roles.find(r => r.level === 4)?.id || '',
+    division_id: '', designation: '', manager_id: '', role_id: roles.find(r => r.level === 5)?.id || '',
     weekly_capacity_hours: 40, status: 'Active', password: ''
   });
   const openEdit = (u) => setForm({
@@ -129,24 +134,27 @@ export default function Users() {
       </div>
       {err && <ErrorNote>{err}</ErrorNote>}
 
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', marginBottom: 14 }}>
-        {[1, 2, 3, 4].map(l => (
-          <div key={l} className={`stat b${l === 1 ? '5' : l === 2 ? '2' : l === 3 ? '3' : '4'}`}>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', marginBottom: 14 }}>
+        {LEVEL_KEYS.map(l => (
+          <div key={l} className={`stat b${l}`}>
             <div className="cap">Level {l}</div>
             <div className="big">{rows.filter(u => u.level === l).length}</div>
-            <div className="foot">{LEVELS[l][0]}</div>
+            <div className="foot">{LEVELS[l].name}</div>
           </div>
         ))}
       </div>
 
       <Card title="Hierarchy" extra={<span className="eyebrow">Who sees whose data</span>}>
-        {[1, 2, 3, 4].map(l => (
-          <div key={l} style={{ display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid #F2F4F8' }}>
+        {LEVEL_KEYS.map((l, i) => (
+          <div key={l} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '8px 0',
+            borderBottom: i < LEVEL_KEYS.length - 1 ? '1px solid #F2F4F8' : 'none' }}>
             <Pill kind={levelTone(l)}>Level {l}</Pill>
-            <div><b style={{ fontSize: 13 }}>{LEVELS[l][0]}</b>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{LEVELS[l][1]}</div></div>
-            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--muted)' }}>
-              {rows.filter(u => u.level === l).length} user(s)</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{LEVELS[l].name}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{LEVELS[l].note}</div>
+            </div>
+            <span className="mono" style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+              scope: {LEVELS[l].scope}</span>
           </div>
         ))}
       </Card>
@@ -163,7 +171,7 @@ export default function Users() {
             {filtered.length ? filtered.map(u => (
               <tr key={u.id}>
                 <td className="mono" style={{ fontSize: 12 }}>{u.employee_code}</td>
-                <td><Avatar name={u.name} size={22} /> <span style={{ fontWeight: 500 }}>{u.name}</span>
+                <td><Avatar name={u.name} size={22} tone={levelAvTone(u.level)} /> <span style={{ fontWeight: 500 }}>{u.name}</span>
                   {u.id === user?.id && <span className="tag" style={{ marginLeft: 4 }}>you</span>}</td>
                 <td style={{ fontSize: 12.5 }}>{u.email}</td>
                 <td style={{ fontSize: 12.5 }}>{u.department || '—'}</td>
@@ -229,7 +237,7 @@ export default function Users() {
           onClose={() => setRights(null)} onSave={saveRights}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <div><Pill kind={levelTone(rights.level)}>Level {rights.level}</Pill>
-              <span style={{ fontSize: 12.5, color: 'var(--muted)', marginLeft: 6 }}>{LEVELS[rights.level][1]}</span></div>
+              <span style={{ fontSize: 12.5, color: 'var(--muted)', marginLeft: 6 }}>{LEVELS[rights.level]?.note}</span></div>
             <button className="btn" onClick={resetRights}>Reset to level defaults</button>
           </div>
           <table className="tbl">
