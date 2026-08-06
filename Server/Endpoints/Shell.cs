@@ -129,10 +129,19 @@ public static class ShellEndpoints
         /* --------------------------------------------------- global search */
         app.MapGet("/api/search", async (HttpContext ctx, Db db) =>
         {
+            var u = (CurrentUser)ctx.Items["user"]!;
             var term = ctx.Request.Query["q"].ToString();
             if (string.IsNullOrWhiteSpace(term) || term.Length < 2) return Results.Json(Array.Empty<object>());
-            var q = $"%{term}%";
-            var results = await db.Q("""
+
+            // Assignments in search obey the same reporting-tree visibility as the
+            // rest of the app, so search can never surface work a person cannot open.
+            var sa = Scope.Assignment(u, "a");
+            var p = new DynamicParameters();
+            p.Add("q", $"%{term}%");
+            p.Add("people", sa.People);
+            p.Add("uid", sa.UserId);
+
+            var results = await db.Q($"""
                 SELECT 'opportunity' AS kind, o.id, o.opportunity_no AS ref, a.name AS label, o.stage AS sub
                   FROM opportunities o JOIN accounts a ON a.id = o.account_id
                  WHERE o.deleted_at IS NULL AND (o.opportunity_no ILIKE @q OR a.name ILIKE @q)
@@ -144,12 +153,13 @@ public static class ShellEndpoints
                   FROM institutions i WHERE i.name ILIKE @q OR i.institution_ref ILIKE @q OR i.house_code ILIKE @q
                 UNION ALL
                 SELECT 'assignment', a.id, a.assignment_no, a.title, a.status
-                  FROM assignments a WHERE a.deleted_at IS NULL AND (a.assignment_no ILIKE @q OR a.title ILIKE @q)
+                  FROM assignments a
+                 WHERE a.deleted_at IS NULL AND ({sa.Sql}) AND (a.assignment_no ILIKE @q OR a.title ILIKE @q)
                 UNION ALL
                 SELECT 'user', u.id, u.employee_code, u.name, u.email
                   FROM users u WHERE u.name ILIKE @q OR u.email ILIKE @q OR u.employee_code ILIKE @q
                  LIMIT 25
-                """, new { q });
+                """, p);
             return Results.Json(results);
         });
 
@@ -157,9 +167,16 @@ public static class ShellEndpoints
         app.MapGet("/api/nav-counts", async (HttpContext ctx, Db db) =>
         {
             var u = (CurrentUser)ctx.Items["user"]!;
-            var row = await db.One("""
+            // The sidebar task badge counts only assignments this user can actually
+            // see, so it matches the Assignments list under the reporting hierarchy.
+            var sa = Scope.Assignment(u, "a");
+            var p = new DynamicParameters();
+            p.Add("uid", u.Id);
+            p.Add("people", sa.People);
+            var row = await db.One($"""
                 SELECT
-                  (SELECT COUNT(*) FROM assignments WHERE deleted_at IS NULL AND status <> 'Completed') AS tasks,
+                  (SELECT COUNT(*) FROM assignments a
+                    WHERE a.deleted_at IS NULL AND a.status <> 'Completed' AND ({sa.Sql})) AS tasks,
                   (SELECT COUNT(*) FROM opportunities WHERE deleted_at IS NULL AND is_converted::integer = 0
                      AND stage IN ('Lead','Qualified','Pitched','Term Sheet','Mandated')) AS opps,
                   (SELECT COUNT(*) FROM accounts WHERE deleted_at IS NULL AND status = 'Active') AS accounts,
@@ -168,7 +185,7 @@ public static class ShellEndpoints
                   (SELECT COUNT(*) FROM research_reports WHERE status = 'Draft') AS reports_draft,
                   (SELECT COUNT(*) FROM client_visits WHERE visit_date = CURRENT_DATE) AS visits_today,
                   (SELECT COUNT(*) FROM notifications WHERE user_id = @uid AND is_read::integer = 0 AND is_deleted::integer = 0) AS notifications
-                """, new { uid = u.Id });
+                """, p);
             return Results.Json((object)row!);
         });
     }

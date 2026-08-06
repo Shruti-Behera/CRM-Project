@@ -300,15 +300,29 @@ public static class Scope
         _ => new($"{alias}.rm_id = @uid", Array.Empty<int>(), null, null, u.Id)
     };
 
+    /// <summary>
+    /// Assignment visibility, strictly by the reporting tree (users.manager_id):
+    ///   scope 'all'    Super Admin              — every assignment
+    ///   scope 'team'   Management/Head/Manager  — their own assignments plus every
+    ///                  assignment owned by someone in their downward reporting tree.
+    ///                  The tree (u.People) is self + all direct/indirect reports, so
+    ///                  a manager never sees work owned by anyone ABOVE them.
+    ///   scope 'own'    Executive                — only their own assignments.
+    /// Watchers are an explicit, deliberate share and are honoured on top of the
+    /// hierarchy at every level, so a person always sees an assignment they were
+    /// added to watch. Department, division and assigned_by no longer widen sight —
+    /// visibility follows the manager_id chain alone, as required.
+    /// </summary>
     public static ScopeSql Assignment(CurrentUser u, string alias = "a") => u.ScopeKind switch
     {
         "all" => new("1=1", Array.Empty<int>(), null, null, u.Id),
         "team" => new($"""
-            ({alias}.assigned_to = ANY(@people) OR {alias}.assigned_by = ANY(@people)
-              OR {alias}.department_id = @deptId)
+            ({alias}.assigned_to = ANY(@people)
+              OR EXISTS (SELECT 1 FROM assignment_watchers w
+                          WHERE w.assignment_id = {alias}.id AND w.user_id = @uid))
             """, u.People ?? Array.Empty<int>(), null, u.DepartmentId, u.Id),
         _ => new($"""
-            ({alias}.assigned_to = @uid OR {alias}.assigned_by = @uid
+            ({alias}.assigned_to = @uid
               OR EXISTS (SELECT 1 FROM assignment_watchers w
                           WHERE w.assignment_id = {alias}.id AND w.user_id = @uid))
             """, Array.Empty<int>(), null, null, u.Id)

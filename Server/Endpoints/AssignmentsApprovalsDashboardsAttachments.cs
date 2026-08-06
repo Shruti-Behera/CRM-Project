@@ -556,12 +556,17 @@ public static class AssignmentEndpoints
 
 public static class WorkApprovalEndpoints
 {
+    /* Work-approval visibility follows the same reporting tree (users.manager_id)
+       as assignments: a team-scoped user sees approvals raised by, or awaiting a
+       decision from, anyone in their downward reporting line — never their own
+       superiors'. Department no longer widens sight. The approver always keeps
+       sight of what they must decide via the 'own' branch's approver_id clause. */
     private static (string Sql, object P) ScopeSql(CurrentUser u) => u.ScopeKind switch
     {
         "all" => ("1=1", new { }),
         "team" => ("""
-            (w.department_id = @dept OR w.raised_by = ANY(@people) OR w.approver_id = ANY(@people))
-            """, (object)new { dept = u.DepartmentId, people = u.People ?? Array.Empty<int>() }),
+            (w.raised_by = ANY(@people) OR w.approver_id = ANY(@people))
+            """, (object)new { people = u.People ?? Array.Empty<int>() }),
         _ => ("(w.raised_by = @uid OR w.approver_id = @uid)", (object)new { uid = u.Id })
     };
 
