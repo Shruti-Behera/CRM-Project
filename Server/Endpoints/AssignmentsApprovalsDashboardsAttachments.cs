@@ -14,18 +14,22 @@ using B = Dictionary<string, JsonElement>;
 
 public static class AssignmentEndpoints
 {
-    /* The people a user may assign work to: the Super Admin can pick anyone
-       active; everyone else is limited to their own downward reporting tree
-       (self + direct/indirect reports), never anyone above them. This is the
-       same reporting hierarchy used for visibility, so the "Assigned to" list
-       and the assignment rules can never drift apart. */
+    /* The people a user may assign work to. Everyone except the Super Admin is
+       limited to their own downward reporting tree (direct + indirect reports);
+       the Super Admin can pick anyone active. The caller themselves is always
+       excluded — assigning work to yourself is not part of this workflow — so an
+       Executive, who has no reports, ends up with an empty list. This is the same
+       manager_id reporting hierarchy used for visibility, so the "Assigned to"
+       list and the assignment rules can never drift apart. */
     private static async Task<int[]> AssignableIds(Db db, CurrentUser u)
     {
         if (u.Level == 1)
-            return (await db.Q("SELECT id FROM users WHERE status = 'Active'"))
+            return (await db.Q("SELECT id FROM users WHERE status = 'Active' AND id <> @me",
+                    new { me = u.Id }))
                    .Select(r => (int)r.id).ToArray();
         var people = u.People ?? Array.Empty<int>();
-        return (await db.Q("SELECT id FROM users WHERE status = 'Active' AND id = ANY(@people)", new { people }))
+        return (await db.Q("SELECT id FROM users WHERE status = 'Active' AND id = ANY(@people) AND id <> @me",
+                new { people, me = u.Id }))
                .Select(r => (int)r.id).ToArray();
     }
 
@@ -419,11 +423,23 @@ public static class AssignmentEndpoints
                server-side, so an invalid pick is rejected regardless of the UI. */
             if (reassigning)
             {
-                var next = await ValidateAssignees(db, u, b.IntArray("assignees"));
+                var next = b.IntArray("assignees").Where(x => x > 0).Distinct().ToArray();
+                if (next.Length == 0) throw AppException.BadRequest("Pick at least one person to assign this to");
                 var oldSet = recipients.ToHashSet();
                 var newSet = next.ToHashSet();
                 var added = next.Where(x => !oldSet.Contains(x)).ToArray();
                 var removed = recipients.Where(x => !newSet.Contains(x)).ToArray();
+
+                /* Only the people being newly ADDED must sit within the caller's
+                   reporting hierarchy (and never be the caller themselves).
+                   Assignees already on the task are left as-is, so editing a task
+                   you happen to be on never trips the hierarchy check. */
+                if (added.Length > 0)
+                {
+                    var allowed = (await AssignableIds(db, u)).ToHashSet();
+                    if (added.Any(x => !allowed.Contains(x)))
+                        throw AppException.Forbidden("You can only assign work to people within your own reporting hierarchy");
+                }
 
                 if (added.Length > 0 || removed.Length > 0)
                 {

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { get, post } from '../lib/api.js';
 import { Card, ErrorNote } from '../components/Bits.jsx';
-import { useAuth } from '../lib/auth.jsx';
 
 const STATUSES = ['Pending', 'In Progress', 'Under Review', 'Completed', 'On Hold'];
 const PRIOS = ['Low', 'Medium', 'High', 'Critical'];
@@ -17,7 +16,6 @@ const softGet = (path) => get(path).then(r => r || []).catch(() => []);
 
 export default function AssignmentForm() {
   const nav = useNavigate();
-  const { user } = useAuth();
 
   const [users, setUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -38,15 +36,14 @@ export default function AssignmentForm() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    // Only people at or below the signed-in user in the reporting tree can be
-    // assigned work — the backend returns exactly that set and also enforces it.
-    softGet('/assignees').then(list =>
-      setUsers(list.length ? list : (user ? [{ id: user.id, name: user.name }] : [])));
+    // Only people BELOW the signed-in user in the reporting tree can be assigned
+    // work. The backend returns exactly that set (excluding the caller) and also
+    // enforces it, so we never default to — or offer — the current user.
+    softGet('/assignees').then(list => setUsers(list || []));
     softGet('/masters/departments').then(setDepartments);
     softGet('/masters/categories').then(setCategories);
     softGet('/masters/projects').then(setProjects);
-    if (user) setForm(f => ({ ...f, assignees: f.assignees.length ? f.assignees : [user.id] }));
-  }, [user]);
+  }, []);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   // Toggle a person in/out of the assignee list. A plain checkbox list is used
