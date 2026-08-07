@@ -258,7 +258,14 @@ public static class Scope
                                .Select(p => (string)p.slug).ToHashSet()
         };
 
-        if (user.ScopeKind != "all")
+        /* The reporting tree — self plus every direct and indirect report, walked
+           strictly DOWNWARD through users.manager_id. The recursive step matches
+           users whose manager is already in the tree (u.manager_id = t.id), so it
+           can only ever add descendants; a person's own managers are never pulled
+           in. Built for everyone except a full-scope Super Admin (who sees all and
+           needs no tree), which now includes Management and Head/HOD so their
+           assignment visibility can be bounded to their own line. */
+        if (user.Level != 1 || user.ScopeKind != "all")
         {
             var ids = await db.Q("""
                 WITH RECURSIVE tree AS (
@@ -301,32 +308,31 @@ public static class Scope
     };
 
     /// <summary>
-    /// Assignment visibility, strictly by the reporting tree (users.manager_id):
-    ///   scope 'all'    Super Admin              — every assignment
-    ///   scope 'team'   Management/Head/Manager  — their own assignments plus every
-    ///                  assignment owned by someone in their downward reporting tree.
-    ///                  The tree (u.People) is self + all direct/indirect reports, so
-    ///                  a manager never sees work owned by anyone ABOVE them.
-    ///   scope 'own'    Executive                — only their own assignments.
-    /// Watchers are an explicit, deliberate share and are honoured on top of the
-    /// hierarchy at every level, so a person always sees an assignment they were
-    /// added to watch. Department, division and assigned_by no longer widen sight —
-    /// visibility follows the manager_id chain alone, as required.
+    /// Assignment visibility, strictly downward through the reporting tree
+    /// (users.manager_id). Keyed on LEVEL, not the role's data-scope, so only the
+    /// Super Admin ever sees the whole organisation:
+    ///   level 1  Super Admin                       — every assignment
+    ///   level 2+ Management, Head/HOD, Manager,     — own assignments plus every
+    ///            Executive                            assignment owned by someone in
+    ///                                                 their DOWNWARD reporting tree.
+    /// u.People is self + all direct/indirect reports and never contains anyone
+    /// above the user, so a Manager cannot see their Head/HOD's, Management's or the
+    /// Super Admin's work, a Head/HOD cannot see Management's or the Super Admin's,
+    /// and an Executive — who has no reports — sees only their own. Watchers are an
+    /// explicit, deliberate share honoured on top at every level. Nothing here reads
+    /// department, division or assigned_by: visibility follows manager_id alone.
     /// </summary>
-    public static ScopeSql Assignment(CurrentUser u, string alias = "a") => u.ScopeKind switch
+    public static ScopeSql Assignment(CurrentUser u, string alias = "a")
     {
-        "all" => new("1=1", Array.Empty<int>(), null, null, u.Id),
-        "team" => new($"""
+        if (u.Level == 1)
+            return new("1=1", Array.Empty<int>(), null, null, u.Id);
+
+        return new($"""
             ({alias}.assigned_to = ANY(@people)
               OR EXISTS (SELECT 1 FROM assignment_watchers w
                           WHERE w.assignment_id = {alias}.id AND w.user_id = @uid))
-            """, u.People ?? Array.Empty<int>(), null, u.DepartmentId, u.Id),
-        _ => new($"""
-            ({alias}.assigned_to = @uid
-              OR EXISTS (SELECT 1 FROM assignment_watchers w
-                          WHERE w.assignment_id = {alias}.id AND w.user_id = @uid))
-            """, Array.Empty<int>(), null, null, u.Id)
-    };
+            """, u.People ?? Array.Empty<int>(), null, u.DepartmentId, u.Id);
+    }
 }
 
 /* -------------------------------------------------------------- audit */

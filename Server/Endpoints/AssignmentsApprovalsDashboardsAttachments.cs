@@ -556,19 +556,17 @@ public static class AssignmentEndpoints
 
 public static class WorkApprovalEndpoints
 {
-    /* Work-approval visibility follows the same reporting tree (users.manager_id)
-       as assignments: a team-scoped user sees approvals raised by, or awaiting a
-       decision from, anyone in their downward reporting line — never their own
-       superiors'. Department no longer widens sight. The approver always keeps
-       sight of what they must decide via the 'own' branch's approver_id clause. */
-    private static (string Sql, object P) ScopeSql(CurrentUser u) => u.ScopeKind switch
-    {
-        "all" => ("1=1", new { }),
-        "team" => ("""
-            (w.raised_by = ANY(@people) OR w.approver_id = ANY(@people))
-            """, (object)new { people = u.People ?? Array.Empty<int>() }),
-        _ => ("(w.raised_by = @uid OR w.approver_id = @uid)", (object)new { uid = u.Id })
-    };
+    /* Work-approval visibility follows the same strictly-downward reporting tree
+       (users.manager_id) as assignments, keyed on LEVEL so only the Super Admin
+       sees everything. Everyone else sees approvals raised by, or awaiting a
+       decision from, themselves or anyone in their downward reporting line — never
+       their own superiors'. For an Executive the tree is just themselves, so this
+       collapses to their own raised/approver rows. Department never widens sight. */
+    private static (string Sql, object P) ScopeSql(CurrentUser u) =>
+        u.Level == 1
+            ? ("1=1", new { })
+            : ("(w.raised_by = ANY(@people) OR w.approver_id = ANY(@people))",
+               (object)new { people = u.People ?? Array.Empty<int>() });
 
     public static void Map(WebApplication app)
     {
