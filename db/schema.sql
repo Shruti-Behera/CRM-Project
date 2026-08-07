@@ -45,13 +45,11 @@ DROP TABLE IF EXISTS accounts CASCADE;
 DROP TABLE IF EXISTS institution_sectors CASCADE;
 DROP TABLE IF EXISTS user_permissions CASCADE;
 DROP TABLE IF EXISTS time_logs CASCADE;
-DROP TABLE IF EXISTS assignment_watchers CASCADE;
-DROP TABLE IF EXISTS assignment_tags CASCADE;
+DROP TABLE IF EXISTS assignment_assignees CASCADE;
 DROP TABLE IF EXISTS assignment_checklist CASCADE;
 DROP TABLE IF EXISTS assignment_notes CASCADE;
 DROP TABLE IF EXISTS assignment_subtasks CASCADE;
 DROP TABLE IF EXISTS assignments CASCADE;
-DROP TABLE IF EXISTS tags CASCADE;
 DROP TABLE IF EXISTS projects CASCADE;
 DROP TABLE IF EXISTS categories CASCADE;
 DROP TABLE IF EXISTS preferences CASCADE;
@@ -202,10 +200,6 @@ CREATE TABLE projects (
   CONSTRAINT uq_project UNIQUE (name),
   CONSTRAINT fk_proj_dept  FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
   CONSTRAINT fk_proj_owner FOREIGN KEY (owner_id)      REFERENCES users(id)       ON DELETE SET NULL) ;
-CREATE TABLE tags (
-  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  name VARCHAR(40) NOT NULL, colour VARCHAR(9) NOT NULL DEFAULT '#23408E',
-  CONSTRAINT uq_tag UNIQUE (name)) ;
 CREATE TABLE work_types (
   id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   name VARCHAR(120) NOT NULL,
@@ -555,17 +549,14 @@ CREATE TABLE assignment_checklist (
   item_text VARCHAR(160) NOT NULL, sort_order SMALLINT NOT NULL DEFAULT 0,
   is_done SMALLINT NOT NULL DEFAULT 0, done_at TIMESTAMP NULL,
   CONSTRAINT fk_chk_asg FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE) ;
-CREATE TABLE assignment_tags (
-  assignment_id INTEGER NOT NULL, tag_id INTEGER NOT NULL,
-  PRIMARY KEY (assignment_id, tag_id),
-  CONSTRAINT fk_at_asg FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
-  CONSTRAINT fk_at_tag FOREIGN KEY (tag_id)        REFERENCES tags(id)        ON DELETE CASCADE) ;
-CREATE TABLE assignment_watchers (
+-- One assignment can be assigned to many users (normalised — no comma lists).
+-- assignments.assigned_to keeps the "primary" (first) assignee for compatibility.
+CREATE TABLE assignment_assignees (
   assignment_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
-  is_support SMALLINT NOT NULL DEFAULT 0,
   PRIMARY KEY (assignment_id, user_id),
-  CONSTRAINT fk_aw_asg  FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
-  CONSTRAINT fk_aw_user FOREIGN KEY (user_id)       REFERENCES users(id)       ON DELETE CASCADE) ;
+  CONSTRAINT fk_aa_asg  FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+  CONSTRAINT fk_aa_user FOREIGN KEY (user_id)       REFERENCES users(id)       ON DELETE CASCADE) ;
+CREATE INDEX ix_aa_user ON assignment_assignees (user_id);
 CREATE TABLE time_logs (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   assignment_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -865,7 +856,8 @@ SELECT u.id AS user_id, u.name, d.name AS department,
               - 8 * COUNT(*) FILTER (WHERE a.status <> 'Completed' AND a.due_date < CURRENT_DATE))) AS efficiency_pct
 FROM users u
 LEFT JOIN departments d ON d.id = u.department_id
-LEFT JOIN assignments a ON a.assigned_to = u.id AND a.deleted_at IS NULL
+LEFT JOIN assignment_assignees aa ON aa.user_id = u.id
+LEFT JOIN assignments a ON a.id = aa.assignment_id AND a.deleted_at IS NULL
 GROUP BY u.id, u.name, d.name;
 
 CREATE OR REPLACE VIEW v_workload AS
@@ -876,7 +868,8 @@ SELECT u.id AS user_id, u.name, d.name AS department, u.weekly_capacity_hours,
        ROUND(100.0 * COALESCE(SUM(a.estimated_hours),0) / NULLIF(u.weekly_capacity_hours,0)) AS utilisation_pct
 FROM users u
 LEFT JOIN departments d ON d.id = u.department_id
-LEFT JOIN assignments a ON a.assigned_to = u.id AND a.status <> 'Completed' AND a.deleted_at IS NULL
+LEFT JOIN assignment_assignees aa ON aa.user_id = u.id
+LEFT JOIN assignments a ON a.id = aa.assignment_id AND a.status <> 'Completed' AND a.deleted_at IS NULL
 WHERE u.status = 'Active'
 GROUP BY u.id, u.name, d.name, u.weekly_capacity_hours;
 

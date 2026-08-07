@@ -42,13 +42,13 @@ export default function Kanban() {
                   style={{ borderLeftColor: border(t) }}>
                   <span className="mono" style={{ fontSize: 10.5, color: 'var(--muted)' }}>{t.assignment_no}</span>
                   <div className="t">{t.title}</div>
-                  <div>
-                    {t.tags && t.tags.split(',').filter(Boolean).slice(0, 2).map(tag =>
-                      <span key={tag} className="tag">{tag}</span>)}
-                  </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                     <div className="prog" style={{ maxWidth: 80 }}><i style={{ width: `${t.progress_pct}%` }} /></div>
-                    <Avatar name={t.assigned_to_name} size={22} />
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      {(t.assigned_to_name || '').split(', ').filter(Boolean).slice(0, 3).map((n, i) => (
+                        <span key={i} style={{ marginLeft: i ? -6 : 0 }}><Avatar name={n} size={22} title={n} /></span>
+                      ))}
+                    </span>
                   </div>
                 </Link>
               )) : <div style={{ fontSize: 12, color: 'var(--muted)', padding: '8px 2px' }}>Nothing here</div>}

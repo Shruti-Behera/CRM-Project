@@ -19,13 +19,16 @@ export default function Workload() {
   const rows = useMemo(() => {
     if (!tasks) return [];
     // Employee basis: all active users if available, else whoever owns work.
+    // A task can now belong to several people; expand the comma-joined names so
+    // each assignee is credited with the task in their own workload row.
+    const nameOf = (t) => (t.assigned_to_name || '').split(', ').filter(Boolean);
     const names = users.length
       ? users.filter(u => u.status === 'Active').map(u => ({ name: u.name, dept: u.department || '—' }))
-      : [...new Set(tasks.map(t => t.assigned_to_name).filter(Boolean))]
-          .map(n => ({ name: n, dept: (tasks.find(t => t.assigned_to_name === n) || {}).department || '—' }));
+      : [...new Set(tasks.flatMap(nameOf))]
+          .map(n => ({ name: n, dept: (tasks.find(t => nameOf(t).includes(n)) || {}).department || '—' }));
 
     return names.map(({ name, dept }) => {
-      const mine = tasks.filter(t => t.assigned_to_name === name);
+      const mine = tasks.filter(t => nameOf(t).includes(name));
       const open = mine.filter(t => t.status !== 'Completed');
       return {
         name, dept,

@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { get, post, patch, del, shortDate } from '../lib/api.js';
 import { Card, Pill, pClass, statusTone, Avatar, Loading, Empty, ErrorNote, Modal } from '../components/Bits.jsx';
 import { useAuth } from '../lib/auth.jsx';
+import { AssigneePicker } from './AssignmentForm.jsx';
 
 const STATUSES = ['Pending', 'In Progress', 'Under Review', 'Completed', 'On Hold'];
 const PRIOS = ['Low', 'Medium', 'High', 'Critical'];
@@ -26,11 +27,18 @@ export default function AssignmentDetail() {
   const [newSub, setNewSub] = useState('');
   const [newChk, setNewChk] = useState('');
   const [timer, setTimer] = useState(null);
+  const [editAssignees, setEditAssignees] = useState(false);
+  const [reassign, setReassign] = useState([]);
 
   const load = () => get(`/assignments/${id}`).then(t => { setT(t); setNoteStatus(t.status); }).catch(e => setErr(e.message));
-  useEffect(() => { load(); softGet('/users').then(setUsers); /* eslint-disable-next-line */ }, [id]);
+  useEffect(() => { load(); softGet('/assignees').then(setUsers); /* eslint-disable-next-line */ }, [id]);
 
   const guard = (fn) => async (...a) => { try { await fn(...a); await load(); } catch (e) { setErr(e.message); } };
+  const saveAssignees = guard(async () => {
+    if (!reassign.length) { setErr('Pick at least one person'); return; }
+    await patch(`/assignments/${id}`, { assignees: reassign });
+    setEditAssignees(false);
+  });
 
   const setStatus = guard((s) => patch(`/assignments/${id}`, { status: s }));
   const setPriority = guard((p) => patch(`/assignments/${id}`, { priority: p }));
@@ -69,7 +77,7 @@ export default function AssignmentDetail() {
   if (!t) return <Loading />;
 
   const subs = t.subtasks || [], checks = t.checklist || [], notes = t.notes || [];
-  const logs = t.time_logs || [], activity = t.activity || [], watchers = t.watchers || [];
+  const logs = t.time_logs || [], activity = t.activity || [], assignees = t.assignees || [];
   const logged = logs.reduce((n, l) => n + Number(l.hours || 0), 0);
   const left = daysToDue(t.due_date);
   const subsDone = subs.filter(s => Number(s.is_done) === 1).length;
@@ -98,7 +106,32 @@ export default function AssignmentDetail() {
             <p style={{ fontSize: 13.5 }}>{t.description || <span style={{ color: 'var(--muted)' }}>No description.</span>}</p>
             <div className="grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', marginTop: 8 }}>
               <Field label="Assigned by">{t.assigned_by_name}</Field>
-              <Field label="Assigned to">{t.assigned_to_name}</Field>
+              <div style={{ gridColumn: 'span 2' }}>
+                <div className="eyebrow" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Assigned to
+                  {can('assignments.edit') && !editAssignees &&
+                    <button className="btn" style={{ padding: '0 7px' }} title="Reassign"
+                      onClick={() => { setReassign(assignees.map(a => a.id)); setEditAssignees(true); }}>✎</button>}
+                </div>
+                {editAssignees ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                    <AssigneePicker users={users} selected={reassign}
+                      onToggle={uid => setReassign(r => r.includes(uid) ? r.filter(x => x !== uid) : [...r, uid])} />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn primary" style={{ padding: '2px 10px' }} onClick={saveAssignees}>Save</button>
+                      <button className="btn" style={{ padding: '2px 10px' }} onClick={() => setEditAssignees(false)}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
+                    {assignees.length ? assignees.map(a => (
+                      <span key={a.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <Avatar name={a.name} size={22} /><span style={{ fontSize: 13 }}>{a.name}</span>
+                      </span>
+                    )) : <span style={{ fontSize: 13.5 }}>{t.assigned_to_name || '—'}</span>}
+                  </div>
+                )}
+              </div>
               <Field label="Project">{t.project || '—'}</Field>
               <Field label="Start">{shortDate(t.start_date)}</Field>
               <Field label="Due">{shortDate(t.due_date)}</Field>
@@ -107,8 +140,6 @@ export default function AssignmentDetail() {
                     {left < 0 ? `${Math.abs(left)}d over` : `${left}d left`}</span>}</Field>
               <Field label="Estimated / logged">{Number(t.estimated_hours)}h / {logged}h</Field>
               <Field label="Repeats">{t.recurrence}</Field>
-              <Field label="Watchers">{watchers.length
-                ? watchers.map(w => <Avatar key={w.id} name={w.name} size={22} />) : '—'}</Field>
 
               <Field label="Status">
                 {can('assignments.edit')

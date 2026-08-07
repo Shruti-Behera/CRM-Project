@@ -315,12 +315,13 @@ public static class Scope
     ///   level 2+ Management, Head/HOD, Manager,     — own assignments plus every
     ///            Executive                            assignment owned by someone in
     ///                                                 their DOWNWARD reporting tree.
-    /// u.People is self + all direct/indirect reports and never contains anyone
-    /// above the user, so a Manager cannot see their Head/HOD's, Management's or the
-    /// Super Admin's work, a Head/HOD cannot see Management's or the Super Admin's,
-    /// and an Executive — who has no reports — sees only their own. Watchers are an
-    /// explicit, deliberate share honoured on top at every level. Nothing here reads
-    /// department, division or assigned_by: visibility follows manager_id alone.
+    /// An assignment is "owned" by each of its assignees (assignment_assignees), so
+    /// a task shared with several people is visible to each of them and to their
+    /// respective managers. u.People is self + all direct/indirect reports and never
+    /// contains anyone above the user, so a Manager cannot see their Head/HOD's,
+    /// Management's or the Super Admin's work, and an Executive — who has no reports
+    /// — sees only their own. Visibility follows manager_id and assignment ownership
+    /// alone: no department, division, assigned_by or watcher widens it.
     /// </summary>
     public static ScopeSql Assignment(CurrentUser u, string alias = "a")
     {
@@ -328,9 +329,8 @@ public static class Scope
             return new("1=1", Array.Empty<int>(), null, null, u.Id);
 
         return new($"""
-            ({alias}.assigned_to = ANY(@people)
-              OR EXISTS (SELECT 1 FROM assignment_watchers w
-                          WHERE w.assignment_id = {alias}.id AND w.user_id = @uid))
+            EXISTS (SELECT 1 FROM assignment_assignees aa
+                     WHERE aa.assignment_id = {alias}.id AND aa.user_id = ANY(@people))
             """, u.People ?? Array.Empty<int>(), null, u.DepartmentId, u.Id);
     }
 }

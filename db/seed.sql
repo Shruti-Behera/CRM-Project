@@ -69,10 +69,6 @@ INSERT INTO categories (name) VALUES
  ('Report'),('Approval'),('Client Request'),('Audit'),('Documentation'),
  ('System Change'),('Recruitment'),('Review'),('Deal Support');
 
-INSERT INTO tags (name, colour) VALUES
- ('urgent','#D0483F'),('board','#23408E'),('sebi','#1D5D9D'),('client-facing','#20B7D2'),
- ('recurring','#0FB59F'),('internal','#8794AB'),('deal','#18B485'),('audit','#E0A21C');
-
 INSERT INTO work_types (name, category) VALUES
  ('Agreement / contract','Legal'),('Office layout','Facilities'),('Furniture & fittings','Facilities'),
  ('Stationery purchase','Administration'),('IT hardware','IT'),('Software licence','IT'),

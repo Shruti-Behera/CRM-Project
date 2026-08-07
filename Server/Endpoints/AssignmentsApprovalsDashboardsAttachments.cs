@@ -14,8 +14,60 @@ using B = Dictionary<string, JsonElement>;
 
 public static class AssignmentEndpoints
 {
+    /* The people a user may assign work to: the Super Admin can pick anyone
+       active; everyone else is limited to their own downward reporting tree
+       (self + direct/indirect reports), never anyone above them. This is the
+       same reporting hierarchy used for visibility, so the "Assigned to" list
+       and the assignment rules can never drift apart. */
+    private static async Task<int[]> AssignableIds(Db db, CurrentUser u)
+    {
+        if (u.Level == 1)
+            return (await db.Q("SELECT id FROM users WHERE status = 'Active'"))
+                   .Select(r => (int)r.id).ToArray();
+        var people = u.People ?? Array.Empty<int>();
+        return (await db.Q("SELECT id FROM users WHERE status = 'Active' AND id = ANY(@people)", new { people }))
+               .Select(r => (int)r.id).ToArray();
+    }
+
+    /* Reject the request unless every id is a distinct, active user the caller is
+       allowed to assign to. Returns the validated, de-duplicated list. Backend
+       enforcement — never trust the front end's filtering alone. */
+    private static async Task<int[]> ValidateAssignees(Db db, CurrentUser u, int[] ids)
+    {
+        var distinct = ids.Where(x => x > 0).Distinct().ToArray();
+        if (distinct.Length == 0) throw AppException.BadRequest("Pick at least one person to assign this to");
+        var allowed = (await AssignableIds(db, u)).ToHashSet();
+        if (distinct.Any(x => !allowed.Contains(x)))
+            throw AppException.Forbidden("You can only assign work to people within your own reporting hierarchy");
+        return distinct;
+    }
+
+    private static async Task<int[]> AssigneeIds(Db db, int id)
+    {
+        var rows = await db.Q("SELECT user_id FROM assignment_assignees WHERE assignment_id = @id", new { id });
+        return rows.Select(r => (int)r.user_id).ToArray();
+    }
+
     public static void Map(WebApplication app)
     {
+        /* Who the signed-in user may assign work to — drives the "Assigned to"
+           multi-select. Only ever returns people at or below them in the tree. */
+        app.MapGet("/api/assignees", async (HttpContext ctx, Db db) =>
+        {
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("assignments.view");
+            var ids = await AssignableIds(db, u);
+            if (ids.Length == 0) return Results.Json(Array.Empty<object>());
+            return Results.Json(await db.Q("""
+                SELECT u.id, u.name, u.employee_code, d.name AS department,
+                       r.level, r.name AS role
+                  FROM users u
+                  JOIN roles r ON r.id = u.role_id
+                  LEFT JOIN departments d ON d.id = u.department_id
+                 WHERE u.id = ANY(@ids)
+                 ORDER BY r.level, u.name
+                """, new { ids }));
+        });
         app.MapGet("/api/assignments", async (HttpContext ctx, Db db) =>
         {
             var u = (CurrentUser)ctx.Items["user"]!;
@@ -27,7 +79,11 @@ public static class AssignmentEndpoints
 
             var qs = ctx.Request.Query;
             if (!string.IsNullOrEmpty(qs["status"])) { where.Add("a.status = @st"); p.Add("st", (string)qs["status"]!); }
-            if (!string.IsNullOrEmpty(qs["assignee"])) { where.Add("a.assigned_to = @to"); p.Add("to", int.Parse(qs["assignee"]!)); }
+            if (!string.IsNullOrEmpty(qs["assignee"]))
+            {
+                where.Add("EXISTS (SELECT 1 FROM assignment_assignees aa WHERE aa.assignment_id = a.id AND aa.user_id = @to)");
+                p.Add("to", int.Parse(qs["assignee"]!));
+            }
             if (!string.IsNullOrEmpty(qs["q"]))
             {
                 where.Add("(a.title ILIKE @q OR a.assignment_no ILIKE @q)");
@@ -38,14 +94,13 @@ public static class AssignmentEndpoints
                 SELECT a.id, a.assignment_no, a.title, a.status, a.priority, a.progress_pct,
                        a.start_date, a.due_date, a.sla_days, a.estimated_hours, a.actual_hours,
                        d.name AS department, c.name AS category, p.name AS project,
-                       ub.name AS assigned_by_name, ut.name AS assigned_to_name,
-                       (a.status <> 'Completed' AND a.due_date < CURRENT_DATE) AS is_overdue,
-                       (SELECT STRING_AGG(t.name, ',') FROM assignment_tags at
-                          JOIN tags t ON t.id = at.tag_id
-                         WHERE at.assignment_id = a.id) AS tags
+                       ub.name AS assigned_by_name,
+                       (SELECT STRING_AGG(u2.name, ', ' ORDER BY u2.name)
+                          FROM assignment_assignees aa JOIN users u2 ON u2.id = aa.user_id
+                         WHERE aa.assignment_id = a.id) AS assigned_to_name,
+                       (a.status <> 'Completed' AND a.due_date < CURRENT_DATE) AS is_overdue
                   FROM assignments a
                   JOIN users ub ON ub.id = a.assigned_by
-                  JOIN users ut ON ut.id = a.assigned_to
                   LEFT JOIN departments d ON d.id = a.department_id
                   LEFT JOIN categories c ON c.id = a.category_id
                   LEFT JOIN projects p ON p.id = a.project_id
@@ -59,9 +114,8 @@ public static class AssignmentEndpoints
             u.Require("assignments.view");
             var uid = u.Id;
             const string mine = """
-                (a.assigned_to = @uid OR EXISTS
-                  (SELECT 1 FROM assignment_watchers w
-                    WHERE w.assignment_id = a.id AND w.user_id = @uid))
+                EXISTS (SELECT 1 FROM assignment_assignees aa
+                         WHERE aa.assignment_id = a.id AND aa.user_id = @uid)
                 """;
             const string baseSql = $"""
                 SELECT a.id, a.assignment_no, a.title, a.due_date, a.priority, a.status,
@@ -150,11 +204,13 @@ public static class AssignmentEndpoints
             u.Require("assignments.view");
             var s = Scope.Assignment(u);
             var row = await db.One($"""
-                SELECT a.*, ub.name AS assigned_by_name, ut.name AS assigned_to_name,
+                SELECT a.*, ub.name AS assigned_by_name,
+                       (SELECT STRING_AGG(u2.name, ', ' ORDER BY u2.name)
+                          FROM assignment_assignees aa JOIN users u2 ON u2.id = aa.user_id
+                         WHERE aa.assignment_id = a.id) AS assigned_to_name,
                        d.name AS department, c.name AS category, p.name AS project
                   FROM assignments a
                   JOIN users ub ON ub.id = a.assigned_by
-                  JOIN users ut ON ut.id = a.assigned_to
                   LEFT JOIN departments d ON d.id = a.department_id
                   LEFT JOIN categories c ON c.id = a.category_id
                   LEFT JOIN projects p ON p.id = a.project_id
@@ -175,10 +231,10 @@ public static class AssignmentEndpoints
                 SELECT t.*, u.name AS who FROM time_logs t JOIN users u ON u.id = t.user_id
                  WHERE t.assignment_id = @id ORDER BY t.log_date DESC
                 """, new { id });
-            row.watchers = await db.Q("""
-                SELECT u.id, u.name, w.is_support FROM assignment_watchers w
-                  JOIN users u ON u.id = w.user_id
-                 WHERE w.assignment_id = @id
+            row.assignees = await db.Q("""
+                SELECT u.id, u.name FROM assignment_assignees aa
+                  JOIN users u ON u.id = aa.user_id
+                 WHERE aa.assignment_id = @id ORDER BY u.name
                 """, new { id });
             row.checklist = await db.Q("""
                 SELECT id, item_text, is_done, sort_order FROM assignment_checklist
@@ -201,7 +257,12 @@ public static class AssignmentEndpoints
             var dueDate = b.Str("due_date");
             if (string.CompareOrdinal(dueDate, startDate) < 0)
                 throw AppException.BadRequest("The due date is before the start date");
-            var assignedTo = b.Int("assigned_to");
+
+            // Accept a list of assignees; fall back to the legacy single field.
+            var requested = b.IntArray("assignees");
+            if (requested.Length == 0 && b.OptInt("assigned_to") is { } single) requested = [single];
+            var assignees = await ValidateAssignees(db, u, requested);
+            var assignedTo = assignees[0];   // primary (first) assignee
 
             var id = await db.Tx(async (conn, tx) =>
             {
@@ -231,14 +292,10 @@ public static class AssignmentEndpoints
                     linkedId = b.OptInt("linked_id")
                 }, tx);
 
-                foreach (var t in b.IntArray("tags"))
+                foreach (var uid in assignees)
                     await conn.ExecuteAsync(
-                        "INSERT INTO assignment_tags (assignment_id, tag_id) VALUES (@aid, @t)",
-                        new { aid, t }, tx);
-                foreach (var w in b.IntArray("watchers"))
-                    await conn.ExecuteAsync(
-                        "INSERT INTO assignment_watchers (assignment_id, user_id) VALUES (@aid, @w)",
-                        new { aid, w }, tx);
+                        "INSERT INTO assignment_assignees (assignment_id, user_id) VALUES (@aid, @uid)",
+                        new { aid, uid }, tx);
 
                 var subtasks = b.ObjArray("subtasks");
                 for (var i = 0; i < subtasks.Count; i++)
@@ -263,9 +320,11 @@ public static class AssignmentEndpoints
                 return aid;
             });
 
-            await Audit.LogActivity(db, ctx, "assignment", id, "created", "Assignment created");
-            await Audit.Notify(db, assignedTo, "New Assignment", "New assignment",
-                $"{b.Str("title")} is due {dueDate}.", "assignment", id);
+            await Audit.LogActivity(db, ctx, "assignment", id, "created",
+                $"Assignment created · {assignees.Length} assignee(s)");
+            foreach (var recipient in assignees.Where(r => r != u.Id))
+                await Audit.Notify(db, recipient, "New Assignment", "New assignment",
+                    $"{b.Str("title")} is due {dueDate}.", "assignment", id, u.Id);
             return Results.Json(new { id }, statusCode: 201);
         });
 
@@ -342,24 +401,67 @@ public static class AssignmentEndpoints
             {
                 sets.Add("due_date = CAST(@due AS date)"); p.Add("due", due);
             }
-            if (sets.Count == 0) throw AppException.BadRequest("Nothing to change");
+            var reassigning = b.ContainsKey("assignees");
+            if (sets.Count == 0 && !reassigning) throw AppException.BadRequest("Nothing to change");
 
-            await db.Exec($"UPDATE assignments SET {string.Join(", ", sets)} WHERE id = @id", p);
-            await Audit.LogActivity(db, ctx, "assignment", id, "updated",
-                status is not null ? $"Status changed to {status}" : "Assignment updated",
-                (string?)row.status, status);
-
-            var assignedTo = (int)row.assigned_to;
-            if (assignedTo != u.Id)
+            if (sets.Count > 0)
             {
-                if (status is not null && status != (string)row.status)
-                    await Audit.Notify(db, assignedTo, "Assignment",
-                        status == "Completed" ? "Assignment completed" : "Assignment status changed",
-                        $"\"{(string)row.title}\" is now {status}.", "assignment", id, u.Id);
-                else if (b.OptStr("priority") is { } prio2 && prio2 != (string)row.priority)
-                    await Audit.Notify(db, assignedTo, "Assignment", "Priority changed",
-                        $"\"{(string)row.title}\" is now {prio2} priority.", "assignment", id, u.Id);
+                await db.Exec($"UPDATE assignments SET {string.Join(", ", sets)} WHERE id = @id", p);
+                await Audit.LogActivity(db, ctx, "assignment", id, "updated",
+                    status is not null ? $"Status changed to {status}" : "Assignment updated",
+                    (string?)row.status, status);
             }
+
+            var recipients = await AssigneeIds(db, id);
+
+            /* Reassignment — add/remove assignees, keep the primary in sync, and
+               tell the people who were added or removed. Hierarchy is validated
+               server-side, so an invalid pick is rejected regardless of the UI. */
+            if (reassigning)
+            {
+                var next = await ValidateAssignees(db, u, b.IntArray("assignees"));
+                var oldSet = recipients.ToHashSet();
+                var newSet = next.ToHashSet();
+                var added = next.Where(x => !oldSet.Contains(x)).ToArray();
+                var removed = recipients.Where(x => !newSet.Contains(x)).ToArray();
+
+                if (added.Length > 0 || removed.Length > 0)
+                {
+                    await db.Tx<int>(async (conn, tx) =>
+                    {
+                        await conn.ExecuteAsync("DELETE FROM assignment_assignees WHERE assignment_id = @id", new { id }, tx);
+                        foreach (var uid in next)
+                            await conn.ExecuteAsync(
+                                "INSERT INTO assignment_assignees (assignment_id, user_id) VALUES (@id, @uid)",
+                                new { id, uid }, tx);
+                        await conn.ExecuteAsync("UPDATE assignments SET assigned_to = @primary WHERE id = @id",
+                            new { id, primary = next[0] }, tx);
+                        return 0;
+                    });
+                    await Audit.LogActivity(db, ctx, "assignment", id, "reassigned",
+                        $"Assignees updated — now {next.Length} person(s)");
+                    foreach (var recipient in added.Where(r => r != u.Id))
+                        await Audit.Notify(db, recipient, "Assignment", "Assigned to you",
+                            $"You were added to \"{(string)row.title}\".", "assignment", id, u.Id);
+                    foreach (var recipient in removed.Where(r => r != u.Id))
+                        await Audit.Notify(db, recipient, "Assignment", "Removed from assignment",
+                            $"You were removed from \"{(string)row.title}\".", "assignment", id, u.Id);
+                    recipients = next;
+                }
+            }
+
+            /* Status / priority changes notify every current assignee. */
+            if (sets.Count > 0)
+                foreach (var recipient in recipients.Where(r => r != u.Id))
+                {
+                    if (status is not null && status != (string)row.status)
+                        await Audit.Notify(db, recipient, "Assignment",
+                            status == "Completed" ? "Assignment completed" : "Assignment status changed",
+                            $"\"{(string)row.title}\" is now {status}.", "assignment", id, u.Id);
+                    else if (b.OptStr("priority") is { } prio2 && prio2 != (string)row.priority)
+                        await Audit.Notify(db, recipient, "Assignment", "Priority changed",
+                            $"\"{(string)row.title}\" is now {prio2} priority.", "assignment", id, u.Id);
+                }
             return Results.Json(new { ok = true });
         });
 
@@ -395,14 +497,16 @@ public static class AssignmentEndpoints
         {
             var u = (CurrentUser)ctx.Items["user"]!;
             u.Require("assignments.delete");
-            var meta = await db.One("SELECT assigned_to, title FROM assignments WHERE id = @id AND deleted_at IS NULL", new { id });
+            var meta = await db.One("SELECT title FROM assignments WHERE id = @id AND deleted_at IS NULL", new { id });
+            var assignees = await AssigneeIds(db, id);
             var n = await db.Exec(
                 "UPDATE assignments SET deleted_at = NOW() WHERE id = @id AND deleted_at IS NULL", new { id });
             if (n == 0) throw AppException.NotFound();
             await Audit.LogActivity(db, ctx, "assignment", id, "deleted", "Assignment deleted");
-            if (meta is not null && (int)meta.assigned_to != u.Id)
-                await Audit.Notify(db, (int)meta.assigned_to, "Assignment", "Assignment removed",
-                    $"\"{(string)meta.title}\" was deleted.", "assignment", null, u.Id);
+            if (meta is not null)
+                foreach (var recipient in assignees.Where(r => r != u.Id))
+                    await Audit.Notify(db, recipient, "Assignment", "Assignment removed",
+                        $"\"{(string)meta.title}\" was deleted.", "assignment", null, u.Id);
             return Results.Json(new { ok = true });
         });
 
@@ -426,12 +530,15 @@ public static class AssignmentEndpoints
                 await Audit.LogActivity(db, ctx, "assignment", id, "status", $"Status changed to {status}");
             }
             await Audit.LogActivity(db, ctx, "assignment", id, "note_added", "Note added");
-            var noteMeta = await db.One("SELECT assigned_to, assigned_by, title FROM assignments WHERE id = @id", new { id });
+            var noteMeta = await db.One("SELECT assigned_by, title FROM assignments WHERE id = @id", new { id });
             if (noteMeta is not null)
-                foreach (var recipient in new[] { (int)noteMeta.assigned_to, (int)noteMeta.assigned_by }.Distinct())
+            {
+                var audience = (await AssigneeIds(db, id)).Append((int)noteMeta.assigned_by).Distinct();
+                foreach (var recipient in audience)
                     if (recipient != u.Id)
                         await Audit.Notify(db, recipient, "Assignment", "New comment",
                             $"{u.Name} commented on \"{(string)noteMeta.title}\".", "assignment", id, u.Id);
+            }
             return Results.Json(new { ok = true }, statusCode: 201);
         });
 

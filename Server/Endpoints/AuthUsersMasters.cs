@@ -222,7 +222,9 @@ public static class UserEndpoints
                        r.name AS role, r.level, r.scope,
                        d.name AS department, dv.name AS division, m.name AS manager,
                        (SELECT COUNT(*) FROM assignments a
-                         WHERE a.assigned_to = u.id AND a.status <> 'Completed') AS open_work,
+                         JOIN assignment_assignees aa ON aa.assignment_id = a.id
+                        WHERE aa.user_id = u.id AND a.deleted_at IS NULL
+                          AND a.status <> 'Completed') AS open_work,
                        (SELECT COUNT(*) FROM user_permissions up WHERE up.user_id = u.id) AS overrides
                   FROM users u
                   JOIN roles r ON r.id = u.role_id
@@ -371,8 +373,10 @@ public static class UserEndpoints
             if (id == me.Id) throw AppException.Conflict("You cannot delete your own account");
 
             var row = await db.One("""
-                SELECT (SELECT COUNT(*) FROM assignments
-                         WHERE assigned_to = @id AND status <> 'Completed') AS open_work,
+                SELECT (SELECT COUNT(*) FROM assignments a
+                         JOIN assignment_assignees aa ON aa.assignment_id = a.id
+                        WHERE aa.user_id = @id AND a.deleted_at IS NULL
+                          AND a.status <> 'Completed') AS open_work,
                        (SELECT COUNT(*) FROM roles r JOIN users u ON u.role_id = r.id
                          WHERE r.level = 1 AND u.status = 'Active' AND u.id <> @id) AS other_admins,
                        (SELECT level FROM roles r JOIN users u ON u.role_id = r.id
@@ -412,7 +416,6 @@ public static class MasterEndpoints
         ["preferences"] = new("preferences", ["name", "pref_type"],
             [("account_preferences", "preference_id")]),
         ["categories"] = new("categories", ["name"], [("assignments", "category_id")]),
-        ["tags"] = new("tags", ["name", "colour"], [("assignment_tags", "tag_id")]),
         ["work-types"] = new("work_types", ["name", "category", "default_approver_id"],
             [("work_approvals", "work_type_id")]),
         ["countries"] = new("countries", ["name", "dial_code"],

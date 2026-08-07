@@ -111,13 +111,13 @@ public static class AdminEndpoints
                 categories = await db.Q("SELECT * FROM categories"),
                 projects = await db.Q("SELECT * FROM projects"),
                 work_types = await db.Q("SELECT * FROM work_types"),
-                tags = await db.Q("SELECT * FROM tags"),
                 holidays = await db.Q("SELECT id, to_char(holiday_date,'YYYY-MM-DD') AS holiday_date, title FROM holidays"),
                 accounts = await db.Q("SELECT * FROM accounts WHERE deleted_at IS NULL"),
                 opportunities = await db.Q("SELECT * FROM opportunities WHERE deleted_at IS NULL"),
                 mandates = await db.Q("SELECT * FROM mandates WHERE deleted_at IS NULL"),
                 institutions = await db.Q("SELECT * FROM institutions"),
                 assignments = await db.Q("SELECT * FROM assignments WHERE deleted_at IS NULL"),
+                assignment_assignees = await db.Q("SELECT * FROM assignment_assignees"),
                 meetings = await db.Q("SELECT * FROM meetings"),
                 work_approvals = await db.Q("SELECT * FROM work_approvals")
             };

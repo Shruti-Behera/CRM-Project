@@ -6,7 +6,7 @@ const TABS = [
   ['departments', 'Departments'], ['divisions', 'Divisions'], ['groups', 'Groups'],
   ['preferences', 'Preferences'], ['countries', 'Locations'], ['sectors', 'Segments'],
   ['deal-types', 'Deal types'], ['categories', 'Categories'], ['projects', 'Projects'],
-  ['work-types', 'Types of work'], ['tags', 'Tags']
+  ['work-types', 'Types of work']
 ];
 
 export default function Masters() {

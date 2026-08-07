@@ -23,13 +23,11 @@ export default function AssignmentForm() {
   const [departments, setDepartments] = useState([]);
   const [categories, setCategories] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [tags, setTags] = useState([]);
 
   const [form, setForm] = useState({
     title: '', description: '', department_id: '', category_id: '', project_id: '',
-    assigned_to: '', start_date: addDays(0), due_date: addDays(7), sla_days: 5,
-    status: 'Pending', priority: 'Medium', estimated_hours: 8, recurrence: 'None',
-    watchers: [], tags: []
+    assignees: [], start_date: addDays(0), due_date: addDays(7), sla_days: 5,
+    status: 'Pending', priority: 'Medium', estimated_hours: 8, recurrence: 'None'
   });
   const [subtasks, setSubtasks] = useState([]);
   const [checklist, setChecklist] = useState([
@@ -40,17 +38,24 @@ export default function AssignmentForm() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    softGet('/users').then(list =>
+    // Only people at or below the signed-in user in the reporting tree can be
+    // assigned work — the backend returns exactly that set and also enforces it.
+    softGet('/assignees').then(list =>
       setUsers(list.length ? list : (user ? [{ id: user.id, name: user.name }] : [])));
     softGet('/masters/departments').then(setDepartments);
     softGet('/masters/categories').then(setCategories);
     softGet('/masters/projects').then(setProjects);
-    softGet('/masters/tags').then(setTags);
-    if (user) setForm(f => ({ ...f, assigned_to: user.id }));
+    if (user) setForm(f => ({ ...f, assignees: f.assignees.length ? f.assignees : [user.id] }));
   }, [user]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const setMulti = (k, e) => set(k, [...e.target.selectedOptions].map(o => Number(o.value)));
+  // Toggle a person in/out of the assignee list. A plain checkbox list is used
+  // instead of a native <select multiple> so every row is a single, reliable
+  // click (no Ctrl/Cmd needed) and the selection updates immediately.
+  const toggleAssignee = (uid) => setForm(f => ({
+    ...f,
+    assignees: f.assignees.includes(uid) ? f.assignees.filter(x => x !== uid) : [...f.assignees, uid]
+  }));
 
   const addSub = () => setSubtasks(s => [...s, { title: '', owner_id: '' }]);
   const setSub = (i, key, v) => setSubtasks(s => s.map((x, j) => j === i ? { ...x, [key]: v } : x));
@@ -64,7 +69,7 @@ export default function AssignmentForm() {
     e.preventDefault();
     setErr('');
     if (!form.title.trim()) { setErr('Add a title before saving'); return; }
-    if (!form.assigned_to) { setErr('Pick who this is assigned to'); return; }
+    if (!form.assignees.length) { setErr('Pick at least one person to assign this to'); return; }
     if (form.due_date < form.start_date) { setErr('The due date is before the start date'); return; }
     setBusy(true);
     try {
@@ -74,7 +79,7 @@ export default function AssignmentForm() {
         department_id: form.department_id ? Number(form.department_id) : undefined,
         category_id: form.category_id ? Number(form.category_id) : undefined,
         project_id: form.project_id ? Number(form.project_id) : undefined,
-        assigned_to: Number(form.assigned_to),
+        assignees: form.assignees.map(Number),
         start_date: form.start_date,
         due_date: form.due_date,
         sla_days: Number(form.sla_days) || 5,
@@ -82,8 +87,6 @@ export default function AssignmentForm() {
         priority: form.priority,
         estimated_hours: Number(form.estimated_hours) || 0,
         recurrence: form.recurrence,
-        watchers: form.watchers,
-        tags: form.tags,
         subtasks: subtasks
           .filter(s => s.title.trim())
           .map(s => ({ title: s.title, owner_id: s.owner_id ? Number(s.owner_id) : undefined })),
@@ -115,8 +118,11 @@ export default function AssignmentForm() {
               opts={categories} placeholder="None" /></L>
             <L label="Project"><Select value={form.project_id} onChange={e => set('project_id', e.target.value)}
               opts={projects} placeholder="None" /></L>
-            <L label="Assigned to"><Select value={form.assigned_to} onChange={e => set('assigned_to', e.target.value)}
-              opts={users} placeholder="— pick —" /></L>
+            <L label="Assigned to (one or more)" full>
+              <AssigneePicker users={users} selected={form.assignees} onToggle={toggleAssignee} />
+              <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '6px 0 0' }}>
+                Tick everyone this work is for. Only people in your reporting hierarchy are listed.</p>
+            </L>
 
             <L label="Start date"><input type="date" value={form.start_date}
               onChange={e => set('start_date', e.target.value)} /></L>
@@ -133,13 +139,6 @@ export default function AssignmentForm() {
               {PRIOS.map(s => <option key={s}>{s}</option>)}</select></L>
             <L label="Repeats"><select value={form.recurrence} onChange={e => set('recurrence', e.target.value)}>
               {RECUR.map(s => <option key={s}>{s}</option>)}</select></L>
-
-            <L label="Watchers"><select multiple size={3}
-              value={form.watchers.map(String)} onChange={e => setMulti('watchers', e)}>
-              {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></L>
-            <L label="Tags"><select multiple size={3}
-              value={form.tags.map(String)} onChange={e => setMulti('tags', e)}>
-              {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></L>
           </div>
         </Card>
 
@@ -184,6 +183,30 @@ export default function AssignmentForm() {
 const L = ({ label, children, full }) => (
   <div style={full ? { gridColumn: '1 / -1' } : undefined}>
     <label>{label}</label>{children}
+  </div>
+);
+
+// A reliable, always-clickable multi-select: one checkbox chip per person.
+export const AssigneePicker = ({ users, selected, onToggle }) => (
+  <div style={{
+    display: 'flex', flexWrap: 'wrap', gap: 8, border: '1px solid var(--line)',
+    borderRadius: 6, padding: 10, maxHeight: 168, overflowY: 'auto', background: '#fff'
+  }}>
+    {users.length ? users.map(u => {
+      const on = selected.includes(u.id);
+      return (
+        <label key={u.id} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0, cursor: 'pointer',
+          fontSize: 12.5, fontWeight: 400, textTransform: 'none', letterSpacing: 0,
+          color: on ? 'var(--navy)' : 'var(--ink)', background: on ? 'var(--tint)' : '#fff',
+          border: '1px solid', borderColor: on ? 'var(--navy)' : 'var(--line)',
+          borderRadius: 20, padding: '3px 11px'
+        }}>
+          <input type="checkbox" checked={on} onChange={() => onToggle(u.id)} style={{ width: 'auto', margin: 0 }} />
+          {u.name}{u.department ? <span style={{ color: 'var(--muted)' }}> · {u.department}</span> : null}
+        </label>
+      );
+    }) : <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>No assignable people found.</span>}
   </div>
 );
 
