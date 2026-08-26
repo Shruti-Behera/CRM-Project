@@ -10,6 +10,10 @@ import Accounts from "./pages/Accounts.jsx";
 import PipelineBoard from "./pages/PipelineBoard.jsx";
 import Opportunities from "./pages/Opportunities.jsx";
 import OpportunityDetail from "./pages/OpportunityDetail.jsx";
+import Mandates from "./pages/Mandates.jsx";
+import MandateDetail from "./pages/MandateDetail.jsx";
+import ClosedProjects from "./pages/ClosedProjects.jsx";
+import DealMeetings from "./pages/DealMeetings.jsx";
 import Institutions from "./pages/Institutions.jsx";
 import InstitutionForm from "./pages/InstitutionForm.jsx";
 import InstitutionalDashboard from "./pages/InstitutionalDashboard.jsx";
@@ -67,6 +71,10 @@ export default function App() {
           path="/banking/opportunities/:id"
           element={<OpportunityDetail />}
         />
+        <Route path="/banking/mandates" element={<Mandates />} />
+        <Route path="/banking/mandates/:id" element={<MandateDetail />} />
+        <Route path="/banking/closed" element={<ClosedProjects />} />
+        <Route path="/banking/deal-meetings" element={<DealMeetings />} />
         <Route path="/institutional" element={<InstitutionalDashboard />} />
         <Route path="/institutional/movement" element={<DailyMovement />} />
         <Route path="/institutional/clients" element={<Institutions />} />

@@ -151,6 +151,7 @@ UserEndpoints.Map(app);
 MasterEndpoints.Map(app);
 AccountEndpoints.Map(app);
 OpportunityEndpoints.Map(app);
+MandateEndpoints.Map(app);
 InstitutionEndpoints.Map(app);
 BrokerageEndpoints.Map(app);
 AssignmentEndpoints.Map(app);
