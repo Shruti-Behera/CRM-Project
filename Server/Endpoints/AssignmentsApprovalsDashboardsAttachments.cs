@@ -496,9 +496,9 @@ public static class AssignmentEndpoints
                      WHERE id = @id
                     """, new { id }, tx);
                 await conn.ExecuteAsync(
-                    "UPDATE assignment_subtasks SET is_done = 1, done_at = NOW() WHERE assignment_id = @id", new { id }, tx);
+                    "UPDATE assignment_subtasks SET is_done = '1', done_at = NOW() WHERE assignment_id = @id", new { id }, tx);
                 await conn.ExecuteAsync(
-                    "UPDATE assignment_checklist SET is_done = 1, done_at = NOW() WHERE assignment_id = @id", new { id }, tx);
+                    "UPDATE assignment_checklist SET is_done = '1', done_at = NOW() WHERE assignment_id = @id", new { id }, tx);
                 return 0;
             });
             await Audit.LogActivity(db, ctx, "assignment", id, "completed", "Marked complete");
@@ -558,14 +558,18 @@ public static class AssignmentEndpoints
             return Results.Json(new { ok = true }, statusCode: 201);
         });
 
-        /* ---- sub-tasks: progress recalculates from them automatically ---- */
         async Task Reprogress(Db db, int id)
         {
             await db.Exec("""
                 UPDATE assignments a SET progress_pct = sub.pct
-                  FROM (SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE is_done = 1)
-                                     / NULLIF(COUNT(*), 0))::int AS pct
-                          FROM assignment_subtasks WHERE assignment_id = @id) sub
+                  FROM (SELECT ROUND(100.0 * SUM(done) / NULLIF(SUM(total), 0))::int AS pct
+                          FROM (
+                            SELECT COUNT(*) FILTER (WHERE is_done::integer = 1) AS done, COUNT(*) AS total
+                              FROM assignment_subtasks WHERE assignment_id = @id
+                            UNION ALL
+                            SELECT COUNT(*) FILTER (WHERE is_done::integer = 1), COUNT(*)
+                              FROM assignment_checklist WHERE assignment_id = @id
+                          ) items) sub
                  WHERE a.id = @id AND a.status <> 'Completed' AND sub.pct IS NOT NULL
                 """, new { id });
         }
@@ -597,12 +601,13 @@ public static class AssignmentEndpoints
 
             if (b.ContainsKey("is_done"))
             {
-                var done = b.Bool("is_done") ? 1 : 0;
-                sets.Add("is_done = @done");
-                sets.Add("done_at = CASE WHEN @done = 1 THEN NOW() ELSE NULL END");
-                p.Add("done", done);
+                var done = b.Bool("is_done");
+                // '1'/'0' string literals coerce to the column type whether is_done
+                // is stored as a smallint or a real boolean, so the write never fails.
+                sets.Add($"is_done = {(done ? "'1'" : "'0'")}");
+                sets.Add(done ? "done_at = NOW()" : "done_at = NULL");
                 progressChanged = true;
-                activity = done == 1 ? "Sub-task completed" : "Sub-task reopened";
+                activity = done ? "Sub-task completed" : "Sub-task reopened";
             }
             if (b.ContainsKey("title")) { sets.Add("title = @title"); p.Add("title", b.Str("title")); activity = "Sub-task renamed"; }
             if (b.ContainsKey("owner_id")) { sets.Add("owner_id = @owner"); p.Add("owner", b.OptInt("owner_id")); activity = "Sub-task reassigned"; }
@@ -635,6 +640,7 @@ public static class AssignmentEndpoints
                         COALESCE((SELECT MAX(sort_order) + 1 FROM assignment_checklist WHERE assignment_id = @id), 1))
                 RETURNING id
                 """, new { id, text = b.Str("item_text") });
+            await Reprogress(db, id);
             await Audit.LogActivity(db, ctx, "assignment", id, "checklist_added", "Checklist item added");
             return Results.Json(new { id = cid }, statusCode: 201);
         });
@@ -648,14 +654,17 @@ public static class AssignmentEndpoints
             var p = new DynamicParameters();
             p.Add("cid", cid); p.Add("id", id);
             string activity = "Checklist updated";
+            var progressChanged = false;
 
             if (b.ContainsKey("is_done"))
             {
-                var done = b.Bool("is_done") ? 1 : 0;
-                sets.Add("is_done = @done");
-                sets.Add("done_at = CASE WHEN @done = 1 THEN NOW() ELSE NULL END");
-                p.Add("done", done);
-                activity = done == 1 ? "Checklist ticked" : "Checklist cleared";
+                var done = b.Bool("is_done");
+                // '1'/'0' string literals coerce to the column type whether is_done
+                // is stored as a smallint or a real boolean, so the write never fails.
+                sets.Add($"is_done = {(done ? "'1'" : "'0'")}");
+                sets.Add(done ? "done_at = NOW()" : "done_at = NULL");
+                progressChanged = true;
+                activity = done ? "Checklist ticked" : "Checklist cleared";
             }
             if (b.ContainsKey("item_text")) { sets.Add("item_text = @text"); p.Add("text", b.Str("item_text")); activity = "Checklist item renamed"; }
             if (sets.Count == 0) throw AppException.BadRequest("Nothing to change");
@@ -663,6 +672,7 @@ public static class AssignmentEndpoints
             var n = await db.Exec(
                 $"UPDATE assignment_checklist SET {string.Join(", ", sets)} WHERE id = @cid AND assignment_id = @id", p);
             if (n == 0) throw AppException.NotFound();
+            if (progressChanged) await Reprogress(db, id);
             await Audit.LogActivity(db, ctx, "assignment", id, "checklist", activity);
             return Results.Json(new { ok = true });
         });
@@ -671,6 +681,7 @@ public static class AssignmentEndpoints
         {
             ((CurrentUser)ctx.Items["user"]!).Require("assignments.edit");
             await db.Exec("DELETE FROM assignment_checklist WHERE id = @cid AND assignment_id = @id", new { cid, id });
+            await Reprogress(db, id);
             await Audit.LogActivity(db, ctx, "assignment", id, "checklist_removed", "Checklist item removed");
             return Results.Json(new { ok = true });
         });
