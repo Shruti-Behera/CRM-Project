@@ -64,7 +64,7 @@ public static class MandateEndpoints
                        m.opportunity_id, o.opportunity_no,
                        ROUND(100.0 * m.realised_fee_l / NULLIF(m.estimated_fee_l,0)) AS realisation_pct,
                        (SELECT COUNT(*) FROM mandate_milestones mm WHERE mm.mandate_id = m.id) AS milestones,
-                       (SELECT COUNT(*) FROM mandate_milestones mm WHERE mm.mandate_id = m.id AND mm.is_done = 1) AS milestones_done,
+                       (SELECT COUNT(*) FROM mandate_milestones mm WHERE mm.mandate_id = m.id AND mm.is_done::integer = 1) AS milestones_done,
                        (SELECT STRING_AGG(us.name, ', ' ORDER BY mt.team_role, us.name)
                           FROM mandate_team mt JOIN users us ON us.id = mt.user_id
                          WHERE mt.mandate_id = m.id) AS team
@@ -121,7 +121,7 @@ public static class MandateEndpoints
 
             row.milestones = await db.Q("""
                 SELECT id, name, sort_order, to_char(due_date,'YYYY-MM-DD') AS due_date,
-                       is_done, to_char(done_at,'YYYY-MM-DD') AS done_at
+                       is_done::integer AS is_done, to_char(done_at,'YYYY-MM-DD') AS done_at
                   FROM mandate_milestones WHERE mandate_id = @id ORDER BY sort_order, id
                 """, new { id });
             row.team = await db.Q("""
@@ -231,8 +231,9 @@ public static class MandateEndpoints
                 ("estimated_fee_l","estimated_fee_l"), ("txn_value_cr","txn_value_cr") })
                 if (b.ContainsKey(key)) { sets.Add($"{col} = @{col}"); p.Add(col, b.Dec(key)); }
             if (b.ContainsKey("expected_end")) { sets.Add("expected_end = CAST(@end AS date)"); p.Add("end", b.OptStr("expected_end")); }
+            // These flag columns are booleans in this database — write booleans.
             foreach (var flag in new[] { "sebi_cleared", "kyc_cleared", "agreement_signed" })
-                if (b.ContainsKey(flag)) { sets.Add($"{flag} = @{flag}"); p.Add(flag, b.Bool(flag) ? 1 : 0); }
+                if (b.ContainsKey(flag)) { sets.Add($"{flag} = @{flag}"); p.Add(flag, b.Bool(flag)); }
 
             if (sets.Count == 0) throw AppException.BadRequest("Nothing to change");
             sets.Add("updated_at = NOW()");
@@ -243,7 +244,7 @@ public static class MandateEndpoints
                 await Audit.LogActivity(db, ctx, "mandate", id, "status",
                     $"Mandate {status.ToLower()}", (string?)cur.status, status);
                 // an executed mandate finishes its source opportunity's journey
-                if (status == "Executed" && cur.opportunity_id is not null)
+                if (status == "Executed" && cur.opportunity_id != null)
                     await db.Exec("""
                         UPDATE opportunities SET stage = 'Closed Won', probability_pct = 100
                          WHERE id = @oid AND deleted_at IS NULL
@@ -281,13 +282,14 @@ public static class MandateEndpoints
             var u = (CurrentUser)ctx.Items["user"]!;
             u.Require("mandates.edit");
             var done = b.Bool("is_done");
+            // is_done is a real boolean column in this database, so write a boolean.
             var n = await db.Exec("""
                 UPDATE mandate_milestones
                    SET is_done = @done,
-                       done_by = CASE WHEN @done = 1 THEN @me ELSE NULL END,
-                       done_at = CASE WHEN @done = 1 THEN NOW() ELSE NULL END
+                       done_by = CASE WHEN @done THEN @me ELSE NULL END,
+                       done_at = CASE WHEN @done THEN NOW() ELSE NULL END
                  WHERE id = @mid AND mandate_id = @id
-                """, new { done = done ? 1 : 0, me = u.Id, mid, id });
+                """, new { done, me = u.Id, mid, id });
             if (n == 0) throw AppException.NotFound();
             var name = await db.Scalar<string>("SELECT name FROM mandate_milestones WHERE id = @mid", new { mid });
             await Audit.LogActivity(db, ctx, "mandate", id,

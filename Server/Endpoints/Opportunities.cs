@@ -21,13 +21,18 @@ public static class OpportunityEndpoints
     private static string ListSql(string where) => $"""
         SELECT o.id, o.opportunity_no, o.stage, o.txn_size_cr, o.expected_fee_l, o.probability_pct,
                o.weighted_fee_l, o.expected_close, o.next_action, o.next_action_due,
-               o.is_converted::integer AS is_converted,
+               o.is_converted::integer AS is_converted, o.source,
+               o.account_id, o.division_id, o.deal_type_id,
                a.name AS account, a.account_code, dt.name AS deal_type, dv.name AS division,
                u.id AS owner_id, u.name AS owner,
+               to_char(o.created_at, 'YYYY-MM-DD') AS created,
                (CURRENT_DATE - o.created_at::date) AS age_days,
+               (SELECT m.mandate_no FROM mandates m
+                 WHERE m.opportunity_id = o.id AND m.deleted_at IS NULL ORDER BY m.id LIMIT 1) AS mandate_no,
                (SELECT STRING_AGG(tu.name, ', ' ORDER BY tu.name)
                   FROM opportunity_team ot JOIN users tu ON tu.id = ot.user_id
                  WHERE ot.opportunity_id = o.id) AS team,
+               (SELECT ARRAY_AGG(ot.user_id) FROM opportunity_team ot WHERE ot.opportunity_id = o.id) AS team_ids,
                (SELECT COUNT(*) FROM attachments at
                  WHERE at.entity_type = 'opportunity' AND at.entity_id = o.id) AS attachments
           FROM opportunities o
@@ -253,6 +258,57 @@ public static class OpportunityEndpoints
                 await Audit.Notify(db, uid, "New Assignment", "Added to a deal",
                     $"You have been added to {row.opportunity_no} {row.account}.", "opportunity", id);
 
+            return Results.Json(new { ok = true });
+        });
+
+        /* PATCH /api/opportunities/{id} — the full Edit dialog: stage, size, fee,
+           probability, expected close, owner and next action, in one call. Stage
+           history is written by the trg_opp_stage trigger when the stage changes. */
+        app.MapPatch("/api/opportunities/{id:int}", async (HttpContext ctx, Db db, int id, B b) =>
+        {
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.Require("opportunities.edit");
+            var row = await db.One(
+                "SELECT stage, owner_id, opportunity_no FROM opportunities WHERE id = @id AND deleted_at IS NULL",
+                new { id }) ?? throw AppException.NotFound();
+
+            var sets = new List<string>();
+            var p = new DynamicParameters();
+            p.Add("id", id);
+
+            string? newStage = null;
+            if (b.OptStr("stage") is { } stage)
+            {
+                if (!Stages.Contains(stage)) throw AppException.BadRequest("Unknown stage");
+                newStage = stage;
+                sets.Add("stage = @stage"); p.Add("stage", stage);
+                if (stage is "Closed Won" or "Lost") sets.Add("closed_at = COALESCE(closed_at, CURRENT_DATE)");
+            }
+            if (b.ContainsKey("txn_size_cr")) { sets.Add("txn_size_cr = @txn"); p.Add("txn", b.Dec("txn_size_cr")); }
+            if (b.ContainsKey("expected_fee_l")) { sets.Add("expected_fee_l = @fee"); p.Add("fee", b.Dec("expected_fee_l")); }
+            if (b.OptInt("probability_pct") is { } prob)
+            {
+                if (prob is < 0 or > 100) throw AppException.BadRequest("probability_pct must be between 0 and 100");
+                sets.Add("probability_pct = @prob"); p.Add("prob", prob);
+            }
+            if (b.ContainsKey("expected_close")) { sets.Add("expected_close = CAST(@close AS date)"); p.Add("close", b.OptStr("expected_close")); }
+            if (b.ContainsKey("owner_id")) { sets.Add("owner_id = @owner"); p.Add("owner", b.Int("owner_id")); }
+            if (b.ContainsKey("next_action")) { sets.Add("next_action = @next"); p.Add("next", b.OptStr("next_action")); }
+            if (b.ContainsKey("next_action_due")) { sets.Add("next_action_due = CAST(@nextDue AS date)"); p.Add("nextDue", b.OptStr("next_action_due")); }
+
+            if (sets.Count == 0) throw AppException.BadRequest("Nothing to change");
+            sets.Add("updated_at = NOW()");
+            await db.Exec($"UPDATE opportunities SET {string.Join(", ", sets)} WHERE id = @id", p);
+
+            if (newStage is not null && newStage != (string)row.stage)
+            {
+                await Audit.LogActivity(db, ctx, "opportunity", id, "stage_moved",
+                    $"Stage moved from {row.stage} to {newStage}", (string)row.stage, newStage);
+                await Audit.Notify(db, (int)row.owner_id, "Stage Moved", "Stage moved",
+                    $"{row.opportunity_no} moved to {newStage}.", "opportunity", id);
+            }
+            else
+                await Audit.LogActivity(db, ctx, "opportunity", id, "updated", "Opportunity updated");
             return Results.Json(new { ok = true });
         });
 

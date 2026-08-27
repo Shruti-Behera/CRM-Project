@@ -26,6 +26,7 @@ const NAV = {
                     ['/banking/opportunities', 'Opportunities', 'opps'], ['/banking/board', 'Pipeline board']]],
       ['Execution', [['/banking/mandates', 'Mandates'], ['/banking/closed', 'Closed projects'],
                      ['/banking/deal-meetings', 'Deal meetings']]],
+      ['Insight', [['/banking/reports', 'Reports']]],
       MASTERS
     ]
   },

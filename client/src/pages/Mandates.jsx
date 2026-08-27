@@ -3,9 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { get, post, lakh, crore, shortDate } from '../lib/api.js';
 import { Card, Pill, Loading, Empty, ErrorNote, Modal } from '../components/Bits.jsx';
 import { useAuth } from '../lib/auth.jsx';
+import { downloadXLSX, bankingName } from '../lib/xlsx.js';
 
 export const mCls = (s) => ({ Active: 'p-progress', Executed: 'p-done', 'On Hold': 'p-hold', Terminated: 'p-red' }[s] || 'p-hold');
 const CLOSED = ['Executed', 'Terminated'];
+
+export const MND_HEADERS = ['No', 'Account', 'Source Opportunity', 'Type', 'Signed', 'End', 'Retainer (L)',
+  'Success Fee %', 'Estimated Fee (L)', 'Realised (L)', 'Outstanding (L)', 'Transaction Value (cr)',
+  'Milestones Done', 'Team', 'Status'];
+export const mndRowX = (m) => [m.mandate_no, m.account, m.opportunity_no || '', m.deal_type,
+  m.signed_on ? String(m.signed_on).slice(0, 10) : '', m.expected_end ? String(m.expected_end).slice(0, 10) : '',
+  Number(m.retainer_l) || 0, Number(m.success_fee_pct) || 0, Number(m.estimated_fee_l) || 0,
+  Number(m.realised_fee_l) || 0, Number(m.outstanding_l) || 0, Number(m.txn_value_cr) || 0,
+  `${Number(m.milestones_done) || 0}/${Number(m.milestones) || 0}`, m.team || '', m.status];
 const softGet = (p) => get(p).then(r => r || []).catch(() => []);
 const num = (v) => Number(v || 0);
 const sum = (arr, f) => arr.reduce((n, x) => n + num(f(x)), 0);
@@ -91,6 +101,7 @@ export default function Mandates() {
             <option value="">All statuses</option>
             {['Active', 'On Hold', 'Executed', 'Terminated'].map(s => <option key={s}>{s}</option>)}
           </select>
+          <button className="btn" onClick={() => rows?.length && downloadXLSX(bankingName('-mandates.xlsx'), [{ name: 'Mandates', headers: MND_HEADERS, rows: rows.map(mndRowX) }])}>Excel</button>
           {can('mandates.create') && <button className="btn primary" onClick={openNew}>New mandate</button>}
         </div>
       </div>

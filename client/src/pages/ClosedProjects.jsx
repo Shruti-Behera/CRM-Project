@@ -2,12 +2,17 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { get, lakh, crore, shortDate } from '../lib/api.js';
 import { Card, Pill, Loading, Empty, ErrorNote } from '../components/Bits.jsx';
-import { Kpi } from './Mandates.jsx';
+import { Kpi, MND_HEADERS, mndRowX } from './Mandates.jsx';
+import { downloadXLSX, bankingName } from '../lib/xlsx.js';
 
 const CLOSED = ['Executed', 'Terminated'];
 const num = (v) => Number(v || 0);
 const sum = (arr, f) => arr.reduce((n, x) => n + num(f(x)), 0);
-const days = (a, b) => (a && b) ? Math.max(0, Math.round((new Date(b) - new Date(a)) / 86400000)) : 0;
+const days = (a, b) => {
+  if (!a || !b) return 0;
+  const d = Math.round((new Date(b) - new Date(a)) / 86400000);
+  return Number.isFinite(d) ? Math.max(0, d) : 0;
+};
 
 export default function ClosedProjects() {
   const nav = useNavigate();
@@ -37,10 +42,16 @@ export default function ClosedProjects() {
 
   return (
     <>
-      <div style={{ marginBottom: 14 }}>
-        <div className="eyebrow">Execution</div>
-        <h3>Closed projects</h3>
-        <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '2px 0 0' }}>Completed mandates and finished internal projects</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div className="eyebrow">Execution</div>
+          <h3>Closed projects</h3>
+          <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '2px 0 0' }}>Completed mandates and finished internal projects</p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={() => mandates?.length && downloadXLSX(bankingName('-closed-mandates.xlsx'), [{ name: 'Closed mandates', headers: MND_HEADERS, rows: mandates.map(mndRowX) }])}>Excel</button>
+          <button className="btn" onClick={() => window.print()}>Print</button>
+        </div>
       </div>
       {err && <ErrorNote>{err}</ErrorNote>}
 

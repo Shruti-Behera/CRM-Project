@@ -7,6 +7,7 @@ import ResetPassword from "./pages/ResetPassword.jsx";
 import Shell from "./components/Shell.jsx";
 import BankingDashboard from "./pages/BankingDashboard.jsx";
 import Accounts from "./pages/Accounts.jsx";
+import AccountDetail from "./pages/AccountDetail.jsx";
 import PipelineBoard from "./pages/PipelineBoard.jsx";
 import Opportunities from "./pages/Opportunities.jsx";
 import OpportunityDetail from "./pages/OpportunityDetail.jsx";
@@ -14,6 +15,7 @@ import Mandates from "./pages/Mandates.jsx";
 import MandateDetail from "./pages/MandateDetail.jsx";
 import ClosedProjects from "./pages/ClosedProjects.jsx";
 import DealMeetings from "./pages/DealMeetings.jsx";
+import BankingReports from "./pages/BankingReports.jsx";
 import Institutions from "./pages/Institutions.jsx";
 import InstitutionForm from "./pages/InstitutionForm.jsx";
 import InstitutionalDashboard from "./pages/InstitutionalDashboard.jsx";
@@ -65,6 +67,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/banking" element={<BankingDashboard />} />
         <Route path="/banking/accounts" element={<Accounts />} />
+        <Route path="/banking/accounts/:id" element={<AccountDetail />} />
         <Route path="/banking/board" element={<PipelineBoard />} />
         <Route path="/banking/opportunities" element={<Opportunities />} />
         <Route
@@ -75,6 +78,7 @@ export default function App() {
         <Route path="/banking/mandates/:id" element={<MandateDetail />} />
         <Route path="/banking/closed" element={<ClosedProjects />} />
         <Route path="/banking/deal-meetings" element={<DealMeetings />} />
+        <Route path="/banking/reports" element={<BankingReports />} />
         <Route path="/institutional" element={<InstitutionalDashboard />} />
         <Route path="/institutional/movement" element={<DailyMovement />} />
         <Route path="/institutional/clients" element={<Institutions />} />
