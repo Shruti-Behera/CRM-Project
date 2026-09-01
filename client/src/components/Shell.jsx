@@ -133,7 +133,7 @@ export default function Shell({ children }) {
           ))}
         </div>
 
-        {NAV[ws].sections.map(([section, items]) => (
+        {NAV[ws].sections.filter(s => (user?.level ?? 99) <= 2 || s !== MASTERS).map(([section, items]) => (
           <div key={section}>
             <div className="navsec">{section}</div>
             {items.map(([to, label, countKey]) => {
@@ -225,8 +225,12 @@ export default function Shell({ children }) {
                     <div style={{ fontWeight: 600, fontSize: 13 }}>{user.name}</div>
                     <div style={{ fontSize: 12, color: 'var(--muted)' }}>{user.email}</div>
                   </div>
-                  <button className="mi" onClick={() => { setMenu(null); nav('/users'); }}>Users &amp; rights</button>
-                  <button className="mi" onClick={() => { setMenu(null); nav('/settings'); }}>Settings</button>
+                  {(user?.level ?? 99) <= 2 && (
+                    <>
+                      <button className="mi" onClick={() => { setMenu(null); nav('/users'); }}>Users &amp; rights</button>
+                      <button className="mi" onClick={() => { setMenu(null); nav('/settings'); }}>Settings</button>
+                    </>
+                  )}
                   <button className="mi" onClick={() => { setMenu(null); setPwOpen(true); }}>Change password</button>
                   <button className="mi" style={{ color: 'var(--red)', borderTop: '1px solid var(--line)' }} onClick={signOut}>Sign out</button>
                 </div>

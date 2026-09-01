@@ -47,6 +47,12 @@ export default function App() {
 
   if (loading) return <Loading />;
 
+  // The Masters module (Users & rights, Category & project, Departments,
+  // Data & backup, Settings) is reachable only by Level 1 & 2. Anyone else who
+  // reaches these routes by URL is bounced to their workspace home. This mirrors
+  // the backend RequireLevel(2) gate so it is not merely a hidden menu.
+  const mastersOk = (user?.level ?? 99) <= 2;
+
   if (!user) {
     return (
       <Routes>
@@ -104,11 +110,11 @@ export default function App() {
         <Route path="/internal/calendar" element={<CalendarPage />} />
         <Route path="/internal/emails" element={<Emails />} />
         <Route path="/internal/work-approvals" element={<WorkApprovals />} />
-        <Route path="/masters" element={<Masters />} />
-        <Route path="/users" element={<Users />} />
-        <Route path="/departments" element={<Departments />} />
-        <Route path="/data-backup" element={<DataBackup />} />
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/masters" element={mastersOk ? <Masters /> : <Navigate to="/" replace />} />
+        <Route path="/users" element={mastersOk ? <Users /> : <Navigate to="/" replace />} />
+        <Route path="/departments" element={mastersOk ? <Departments /> : <Navigate to="/" replace />} />
+        <Route path="/data-backup" element={mastersOk ? <DataBackup /> : <Navigate to="/" replace />} />
+        <Route path="/settings" element={mastersOk ? <Settings /> : <Navigate to="/" replace />} />
         <Route path="*" element={<NotBuilt />} />
       </Routes>
     </Shell>

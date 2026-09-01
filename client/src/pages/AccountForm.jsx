@@ -152,20 +152,22 @@ export default function AccountForm({ accountId = null, onClose, onSaved }) {
         <div><label>Designation</label><input value={form.contact_designation} onChange={e => setFo('contact_designation', e.target.value)} /></div>
         <div><label>Email</label><input type="email" value={form.contact_email} onChange={e => setFo('contact_email', e.target.value)} /></div>
 
-        <div><label>Phone</label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <select style={{ maxWidth: 96 }} value={form.phone_code}
-              onChange={e => setForm(x => ({ ...x, phone_code: e.target.value, _phoneTouched: true }))}>
-              <option value="">Code</option>{dials.map(d => <option key={d}>{d}</option>)}</select>
-            <input placeholder="Landline" value={form.phone_number} onChange={e => setFo('phone_number', e.target.value)} />
-          </div></div>
-        <div><label>Mobile</label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <select style={{ maxWidth: 96 }} value={form.mobile_code}
-              onChange={e => setForm(x => ({ ...x, mobile_code: e.target.value, _mobileTouched: true }))}>
-              <option value="">Code</option>{dials.map(d => <option key={d}>{d}</option>)}</select>
-            <input placeholder="Mobile" value={form.mobile_number} onChange={e => setFo('mobile_number', e.target.value)} />
-          </div></div>
+        <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label>Phone</label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <select style={{ width: 110, flex: '0 0 110px' }} value={form.phone_code}
+                onChange={e => setForm(x => ({ ...x, phone_code: e.target.value, _phoneTouched: true }))}>
+                <option value="">Code</option>{dials.map(d => <option key={d}>{d}</option>)}</select>
+              <input style={{ flex: 1, minWidth: 0 }} placeholder="Landline" value={form.phone_number} onChange={e => setFo('phone_number', e.target.value)} />
+            </div></div>
+          <div><label>Mobile</label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <select style={{ width: 110, flex: '0 0 110px' }} value={form.mobile_code}
+                onChange={e => setForm(x => ({ ...x, mobile_code: e.target.value, _mobileTouched: true }))}>
+                <option value="">Code</option>{dials.map(d => <option key={d}>{d}</option>)}</select>
+              <input style={{ flex: 1, minWidth: 0 }} placeholder="Mobile" value={form.mobile_number} onChange={e => setFo('mobile_number', e.target.value)} />
+            </div></div>
+        </div>
 
         <div style={{ gridColumn: '1 / -1' }}><label>Preferences</label>
           {activePrefs.length ? (

@@ -17,7 +17,9 @@ public static class SettingsEndpoints
     {
         app.MapGet("/api/settings", async (HttpContext ctx, Db db) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("users.view");
+            var su = (CurrentUser)ctx.Items["user"]!;
+            su.RequireLevel(2);             // Masters module (Settings): Level 1 & 2 only
+            su.Require("users.view");
             var rows = await db.Q("""SELECT "key", "value" FROM settings""");
             var dict = new Dictionary<string, string?>();
             foreach (var r in rows) dict[(string)r.key] = (string?)r.value;

@@ -195,6 +195,15 @@ public sealed class CurrentUser
     {
         if (Level != 1) throw AppException.Forbidden("Only a Super Admin can do that");
     }
+    /// <summary>
+    /// Gate a feature by hierarchy level (1 = highest). RequireLevel(2) allows
+    /// Level 1 and Level 2 only. Used to restrict the shared Masters module so it
+    /// is reachable exclusively by Super Admin and Management.
+    /// </summary>
+    public void RequireLevel(int maxLevel)
+    {
+        if (Level > maxLevel) throw AppException.Forbidden("Your access level cannot use this module");
+    }
 }
 
 /* A WHERE fragment plus the parameters it needs, merged into the query's own. */

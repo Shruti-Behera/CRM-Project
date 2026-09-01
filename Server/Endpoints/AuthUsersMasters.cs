@@ -206,10 +206,12 @@ public static class UserEndpoints
 {
     public static void Map(WebApplication app)
     {
-        /* Roles, for the user form's access-level picker. */
+        /* Roles, for the user form's access-level picker (Users & Rights → Masters). */
         app.MapGet("/api/roles", async (HttpContext ctx, Db db) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("users.view");
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.RequireLevel(2);              // Masters module: Level 1 & 2 only
+            u.Require("users.view");
             return Results.Json(await db.Q("SELECT id, name, slug, level, scope FROM roles ORDER BY level"));
         });
 
@@ -335,7 +337,9 @@ public static class UserEndpoints
         /* The rights grid: every permission, and whether this user has it. */
         app.MapGet("/api/users/{id:int}/permissions", async (HttpContext ctx, Db db, int id) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("users.view");
+            var u = (CurrentUser)ctx.Items["user"]!;
+            u.RequireLevel(2);              // Masters module: Level 1 & 2 only
+            u.Require("users.view");
             return Results.Json(await db.Q("""
                 SELECT p.id, p.slug, p.module, p.action, p.label,
                        (rp.permission_id IS NOT NULL) AS from_role,
@@ -462,7 +466,9 @@ public static class MasterEndpoints
 
         app.MapPost("/api/masters/{master}", async (HttpContext ctx, Db db, string master, B b) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("masters.create");
+            var mu = (CurrentUser)ctx.Items["user"]!;
+            mu.RequireLevel(2);              // Masters module: Level 1 & 2 only
+            mu.Require("masters.create");
             var m = Find(master);
             var cols = m.Fields.Where(b.ContainsKey).ToArray();
             if (cols.Length == 0) throw AppException.BadRequest("Nothing to save");
@@ -479,7 +485,9 @@ public static class MasterEndpoints
 
         app.MapPut("/api/masters/{master}/{id:int}", async (HttpContext ctx, Db db, string master, int id, B b) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("masters.edit");
+            var mu = (CurrentUser)ctx.Items["user"]!;
+            mu.RequireLevel(2);              // Masters module: Level 1 & 2 only
+            mu.Require("masters.edit");
             var m = Find(master);
             var cols = m.Fields.Where(b.ContainsKey).ToArray();
             if (cols.Length == 0) throw AppException.BadRequest("Nothing to change");
@@ -498,7 +506,9 @@ public static class MasterEndpoints
         app.MapPatch("/api/masters/{master}/{id:int}/retire",
             async (HttpContext ctx, Db db, string master, int id, B b) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("masters.edit");
+            var mu = (CurrentUser)ctx.Items["user"]!;
+            mu.RequireLevel(2);              // Masters module: Level 1 & 2 only
+            mu.Require("masters.edit");
             var m = Find(master);
             await db.Exec($"UPDATE {m.Table} SET is_active = @a WHERE id = @id",
                 new { a = b.Bool("active") ? 1 : 0, id });
@@ -508,7 +518,9 @@ public static class MasterEndpoints
         /* Deleting is refused while anything still points at it, and says how much. */
         app.MapDelete("/api/masters/{master}/{id:int}", async (HttpContext ctx, Db db, string master, int id) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("masters.delete");
+            var mu = (CurrentUser)ctx.Items["user"]!;
+            mu.RequireLevel(2);              // Masters module: Level 1 & 2 only
+            mu.Require("masters.delete");
             var m = Find(master);
             long used = 0;
             foreach (var (table, column) in m.Usage)

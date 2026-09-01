@@ -19,7 +19,9 @@ public static class AdminEndpoints
         /* ---------------------------------------------------------- holidays */
         app.MapGet("/api/holidays", async (HttpContext ctx, Db db) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("users.view");
+            var hu = (CurrentUser)ctx.Items["user"]!;
+            hu.RequireLevel(2);             // Masters module (Settings): Level 1 & 2 only
+            hu.Require("users.view");
             return Results.Json(await db.Q("""
                 SELECT id, to_char(holiday_date, 'YYYY-MM-DD') AS holiday_date, title
                   FROM holidays ORDER BY holiday_date
@@ -59,7 +61,9 @@ public static class AdminEndpoints
         /* --------------------------------------------------------- audit log */
         app.MapGet("/api/audit", async (HttpContext ctx, Db db) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("users.view");
+            var au = (CurrentUser)ctx.Items["user"]!;
+            au.RequireLevel(2);             // Masters module (Settings → audit): Level 1 & 2 only
+            au.Require("users.view");
             var where = new List<string> { "1=1" };
             var p = new DynamicParameters();
             var qs = ctx.Request.Query;
@@ -81,7 +85,9 @@ public static class AdminEndpoints
         /* --------------------------------------------------- data & backup */
         app.MapGet("/api/backup", async (HttpContext ctx, Db db) =>
         {
-            ((CurrentUser)ctx.Items["user"]!).Require("users.view");
+            var bu = (CurrentUser)ctx.Items["user"]!;
+            bu.RequireLevel(2);             // Masters module (Data & backup): Level 1 & 2 only
+            bu.Require("users.view");
             var row = await db.One("""
                 SELECT
                   (SELECT COUNT(*) FROM accounts)       AS accounts,
