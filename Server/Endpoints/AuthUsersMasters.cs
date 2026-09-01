@@ -225,6 +225,10 @@ public static class UserEndpoints
                          JOIN assignment_assignees aa ON aa.assignment_id = a.id
                         WHERE aa.user_id = u.id AND a.deleted_at IS NULL
                           AND a.status <> 'Completed') AS open_work,
+                       ((SELECT COUNT(*) FROM accounts ac
+                          WHERE ac.owner_id = u.id AND ac.deleted_at IS NULL)
+                      + (SELECT COUNT(*) FROM opportunities op
+                          WHERE op.owner_id = u.id AND op.deleted_at IS NULL)) AS owns,
                        (SELECT COUNT(*) FROM user_permissions up WHERE up.user_id = u.id) AS overrides
                   FROM users u
                   JOIN roles r ON r.id = u.role_id
@@ -370,26 +374,35 @@ public static class UserEndpoints
         {
             var me = (CurrentUser)ctx.Items["user"]!;
             me.RequireSuperAdmin();
-            if (id == me.Id) throw AppException.Conflict("You cannot delete your own account");
+            if (id == me.Id) throw AppException.Conflict("You cannot deactivate your own account");
 
             var row = await db.One("""
-                SELECT (SELECT COUNT(*) FROM assignments a
-                         JOIN assignment_assignees aa ON aa.assignment_id = a.id
-                        WHERE aa.user_id = @id AND a.deleted_at IS NULL
-                          AND a.status <> 'Completed') AS open_work,
-                       (SELECT COUNT(*) FROM roles r JOIN users u ON u.role_id = r.id
+                SELECT (SELECT COUNT(*) FROM roles r JOIN users u ON u.role_id = r.id
                          WHERE r.level = 1 AND u.status = 'Active' AND u.id <> @id) AS other_admins,
                        (SELECT level FROM roles r JOIN users u ON u.role_id = r.id
-                         WHERE u.id = @id) AS level
+                         WHERE u.id = @id) AS level,
+                       (SELECT name FROM users WHERE id = @id) AS name,
+                       (SELECT status FROM users WHERE id = @id) AS status
                 """, new { id }) ?? throw AppException.NotFound();
             if (row.level is null) throw AppException.NotFound();
             if (Convert.ToInt32(row.level) == 1 && Convert.ToInt64(row.other_admins) == 0)
-                throw AppException.Conflict("This is the last Super Admin");
-            if (Convert.ToInt64(row.open_work) > 0)
-                throw AppException.Conflict($"{row.open_work} open assignment(s) are with this person");
+                throw AppException.Conflict("This is the last active Super Admin");
 
-            await db.Exec("DELETE FROM users WHERE id = @id", new { id });
-            await Audit.LogActivity(db, ctx, "user", id, "deleted", "User removed");
+            // Soft delete: the record and every historical relationship
+            // (assignments, accounts, opportunities, meetings, ownership, audit
+            // trail) are left completely untouched — the account is simply flagged
+            // Inactive. Inactive users cannot log in (checked at /api/auth/login)
+            // and cannot be picked for new assignments (AssignableIds filters
+            // status = 'Active'). A Super Admin can reactivate them at any time.
+            if ((string)row.status != "Inactive")
+            {
+                await db.Exec("UPDATE users SET status = 'Inactive' WHERE id = @id", new { id });
+                await Audit.LogActivity(db, ctx, "user", id, "deactivated",
+                    $"User {row.name} set to Inactive; record and history preserved");
+                await Audit.Notify(db, id, "Account", "Account deactivated",
+                    "Your account has been set to inactive. Contact a Super Admin if this is unexpected.",
+                    "user", id, me.Id);
+            }
             return Results.Json(new { ok = true });
         });
     }

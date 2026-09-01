@@ -86,8 +86,18 @@ export default function Users() {
   };
 
   const removeUser = async (u) => {
-    if (!window.confirm(`Delete ${u.name}? History stays; the record goes. Consider Inactive instead.`)) return;
+    const open = Number(u.open_work) || 0;
+    const owns = Number(u.owns) || 0;
+    const msg = `Deactivate ${u.name}?`
+      + (open ? `\n\n${open} open assignment(s) are with them.` : '')
+      + (owns ? `${open ? '\n' : '\n\n'}${owns} account(s)/opportunity(s) are owned by them.` : '')
+      + `\n\nTheir history stays intact. They won't be able to log in or take new assignments. You can reactivate them anytime.`;
+    if (!window.confirm(msg)) return;
     try { await del(`/users/${u.id}`); load(); } catch (e) { setErr(e.message); }
+  };
+
+  const reactivateUser = async (u) => {
+    try { await put(`/users/${u.id}`, { status: 'Active' }); load(); } catch (e) { setErr(e.message); }
   };
 
   /* ---- rights ---- */
@@ -186,7 +196,9 @@ export default function Users() {
                     <>
                       <button className="btn" style={{ padding: '2px 8px' }} onClick={() => openEdit(u)}>Edit</button>{' '}
                       <button className="btn" style={{ padding: '2px 8px' }} onClick={() => openRights(u)}>Rights</button>{' '}
-                      <button className="btn" style={{ padding: '2px 8px', color: 'var(--red)' }} onClick={() => removeUser(u)}>Delete</button>
+                      {u.status === 'Active'
+                        ? <button className="btn" style={{ padding: '2px 8px', color: 'var(--red)' }} onClick={() => removeUser(u)}>Deactivate</button>
+                        : <button className="btn" style={{ padding: '2px 8px', color: 'var(--green)' }} onClick={() => reactivateUser(u)}>Reactivate</button>}
                     </>
                   ) : <span style={{ fontSize: 12, color: 'var(--muted)' }}>—</span>}
                 </td>
