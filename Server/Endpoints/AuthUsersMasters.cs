@@ -205,6 +205,29 @@ public static class AuthEndpoints
 
 public static class UserEndpoints
 {
+    /* One parsed spreadsheet row for the bulk importer. Holds the resolved
+       foreign-key ids plus the raw manager reference, so a "Reports to" manager
+       who is being created in the SAME file can be linked once every row has an
+       id. The record it produces is identical to a manually created user. */
+    private sealed class ImpRow
+    {
+        public int Index;
+        public string Code = "", Name = "", Email = "";
+        public string? Mobile, Desig;
+        public int? DeptId, DivId, MgrId;
+        public int RoleId;
+        public decimal Cap = 40m;
+        public string Status = "Active", Pw = "";
+        public bool BaseValid;
+        public List<string> Errors = new();
+        public string MgrKind = "none";   // id | code | email | none
+        public string MgrVal = "";
+        public bool MgrDeferred;          // manager is another row in this same file
+        public int NewId;
+        public string RoleDisplay = "", DeptDisplay = "", MgrDisplay = "";
+        public bool Valid => Errors.Count == 0;
+    }
+
     public static void Map(WebApplication app)
     {
         /* Roles, for the user form's access-level picker (Users & Rights → Masters). */
@@ -299,19 +322,29 @@ public static class UserEndpoints
             if (rows.Count == 0) throw AppException.BadRequest("The file has no rows to import");
             if (rows.Count > 1000) throw AppException.BadRequest("Please import at most 1000 rows at a time");
 
-            // Lookups, loaded once, matched case-insensitively by their display name.
+            // Lookups, loaded once. Names/emails/codes are matched case-insensitively
+            // and resolved to the same integer foreign keys the manual form's dropdowns
+            // produce.
             var roleByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var r in await db.Q("SELECT id, name FROM roles")) roleByName[(string)r.name] = (int)r.id;
+            var roleIds = new HashSet<int>();
+            foreach (var r in await db.Q("SELECT id, name FROM roles")) { roleByName[(string)r.name] = (int)r.id; roleIds.Add((int)r.id); }
             var deptByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var d in await db.Q("SELECT id, name FROM departments")) deptByName[(string)d.name] = (int)d.id;
+            var deptIds = new HashSet<int>();
+            foreach (var d in await db.Q("SELECT id, name FROM departments")) { deptByName[(string)d.name] = (int)d.id; deptIds.Add((int)d.id); }
             var divByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var d in await db.Q("SELECT id, name FROM divisions")) divByName[(string)d.name] = (int)d.id;
-            var existingEmails = (await db.Q("SELECT email FROM users"))
-                .Select(r => (string)r.email).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var existingCodes = (await db.Q("SELECT employee_code AS code FROM users"))
-                .Select(r => (string)r.code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var divIds = new HashSet<int>();
+            foreach (var d in await db.Q("SELECT id, name FROM divisions")) { divByName[(string)d.name] = (int)d.id; divIds.Add((int)d.id); }
             var usersByEmail = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var u in await db.Q("SELECT id, email FROM users")) usersByEmail[(string)u.email] = (int)u.id;
+            var usersByCode = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var userIds = new HashSet<int>();
+            foreach (var u in await db.Q("SELECT id, email, employee_code FROM users"))
+            {
+                usersByEmail[(string)u.email] = (int)u.id;
+                usersByCode[(string)u.employee_code] = (int)u.id;
+                userIds.Add((int)u.id);
+            }
+            var existingEmails = usersByEmail.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var existingCodes = usersByCode.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             static string Cell(B r, params string[] keys)
             {
@@ -330,128 +363,181 @@ public static class UserEndpoints
                     }
                 return "";
             }
+            static int? CellInt(B r, params string[] keys)
+            {
+                var s = Cell(r, keys);
+                return int.TryParse(s, out var n) ? n : (int?)null;
+            }
             static bool ValidEmail(string s) =>
                 System.Text.RegularExpressions.Regex.IsMatch(s, @"^[^@\s]+@[^@\s]+\.[^@\s]+$");
 
-            var results = new List<object>();
-            var toInsert = new List<(string code, string name, string email, string? mobile, int? deptId,
-                int? divId, string? desig, int? mgrId, int roleId, decimal cap, string status, string pw)>();
+            var parsed = new List<ImpRow>();
             var seenEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            // ---- pass 1: every field except manager resolvability ----
             for (int i = 0; i < rows.Count; i++)
             {
                 var r = rows[i];
-                var errors = new List<string>();
+                var row = new ImpRow { Index = i + 2 };
 
-                var code = Cell(r, "employee_code", "employee code", "code");
-                var name = Cell(r, "name", "full name");
-                var email = Cell(r, "email");
+                row.Code = Cell(r, "employee_code", "employee code", "code");
+                row.Name = Cell(r, "name", "full name");
+                row.Email = Cell(r, "email");
                 var mobile = Cell(r, "mobile", "phone");
-                var deptName = Cell(r, "department", "department_name");
-                var divName = Cell(r, "division");
+                row.Mobile = mobile.Length > 0 ? mobile : null;
                 var desig = Cell(r, "designation", "title");
-                var mgrEmail = Cell(r, "manager_email", "manager email", "manager");
+                row.Desig = desig.Length > 0 ? desig : null;
+
+                if (row.Code.Length == 0) row.Errors.Add("Employee code is required");
+                if (row.Name.Length == 0) row.Errors.Add("Name is required");
+                if (row.Email.Length == 0) row.Errors.Add("Email is required");
+                else if (!ValidEmail(row.Email)) row.Errors.Add("Email format is invalid");
+
+                if (row.Email.Length > 0)
+                {
+                    if (existingEmails.Contains(row.Email)) row.Errors.Add("A user with this email already exists");
+                    else if (!seenEmails.Add(row.Email)) row.Errors.Add("Duplicate email within the file");
+                }
+                if (row.Code.Length > 0)
+                {
+                    if (existingCodes.Contains(row.Code)) row.Errors.Add("A user with this employee code already exists");
+                    else if (!seenCodes.Add(row.Code)) row.Errors.Add("Duplicate employee code within the file");
+                }
+
+                // role — accept role_id or role name; required (same as the manual dropdown)
+                var roleIdRaw = CellInt(r, "role_id");
                 var roleName = Cell(r, "role", "role_name", "access level");
+                if (roleIdRaw is int rid) { if (roleIds.Contains(rid)) { row.RoleId = rid; row.RoleDisplay = $"#{rid}"; } else row.Errors.Add($"Unknown role_id {rid}"); }
+                else if (roleName.Length > 0) { if (roleByName.TryGetValue(roleName, out var r2)) { row.RoleId = r2; row.RoleDisplay = roleName; } else row.Errors.Add($"Unknown role '{roleName}'"); }
+                else row.Errors.Add("Role is required");
+
+                // department — accept department_id or name; optional
+                var deptIdRaw = CellInt(r, "department_id");
+                var deptName = Cell(r, "department", "department_name");
+                if (deptIdRaw is int did) { if (deptIds.Contains(did)) { row.DeptId = did; row.DeptDisplay = $"#{did}"; } else row.Errors.Add($"Unknown department_id {did}"); }
+                else if (deptName.Length > 0) { if (deptByName.TryGetValue(deptName, out var d2)) { row.DeptId = d2; row.DeptDisplay = deptName; } else row.Errors.Add($"Unknown department '{deptName}'"); }
+
+                // division — accept division_id or name; optional
+                var divIdRaw = CellInt(r, "division_id");
+                var divName = Cell(r, "division");
+                if (divIdRaw is int vid2) { if (divIds.Contains(vid2)) row.DivId = vid2; else row.Errors.Add($"Unknown division_id {vid2}"); }
+                else if (divName.Length > 0) { if (divByName.TryGetValue(divName, out var v2)) row.DivId = v2; else row.Errors.Add($"Unknown division '{divName}'"); }
+
                 var capStr = Cell(r, "weekly_capacity_hours", "capacity", "weekly capacity");
+                if (capStr.Length > 0)
+                {
+                    if (decimal.TryParse(capStr, out var cap)) row.Cap = cap;
+                    else row.Errors.Add("Weekly capacity must be a number");
+                }
+
                 var statusStr = Cell(r, "status");
-                var pw = Cell(r, "temporary_password", "temporary password", "password");
-
-                if (code.Length == 0) errors.Add("Employee code is required");
-                if (name.Length == 0) errors.Add("Name is required");
-                if (email.Length == 0) errors.Add("Email is required");
-                else if (!ValidEmail(email)) errors.Add("Email format is invalid");
-
-                if (email.Length > 0)
-                {
-                    if (existingEmails.Contains(email)) errors.Add("A user with this email already exists");
-                    else if (!seenEmails.Add(email)) errors.Add("Duplicate email within the file");
-                }
-                if (code.Length > 0)
-                {
-                    if (existingCodes.Contains(code)) errors.Add("A user with this employee code already exists");
-                    else if (!seenCodes.Add(code)) errors.Add("Duplicate employee code within the file");
-                }
-
-                int roleId = 0;
-                if (roleName.Length == 0) errors.Add("Role is required");
-                else if (!roleByName.TryGetValue(roleName, out roleId)) errors.Add($"Unknown role '{roleName}'");
-
-                int? deptId = null;
-                if (deptName.Length > 0)
-                {
-                    if (deptByName.TryGetValue(deptName, out var did)) deptId = did;
-                    else errors.Add($"Unknown department '{deptName}'");
-                }
-                int? divId = null;
-                if (divName.Length > 0)
-                {
-                    if (divByName.TryGetValue(divName, out var vid)) divId = vid;
-                    else errors.Add($"Unknown division '{divName}'");
-                }
-                int? mgrId = null;
-                if (mgrEmail.Length > 0)
-                {
-                    if (usersByEmail.TryGetValue(mgrEmail, out var mid)) mgrId = mid;
-                    else errors.Add($"Manager '{mgrEmail}' not found (managers must already exist)");
-                }
-
-                decimal cap = 40m;
-                if (capStr.Length > 0 && !decimal.TryParse(capStr, out cap))
-                { errors.Add("Weekly capacity must be a number"); cap = 40m; }
-
-                string status = "Active";
                 if (statusStr.Length > 0)
                 {
-                    if (statusStr.Equals("Active", StringComparison.OrdinalIgnoreCase)) status = "Active";
-                    else if (statusStr.Equals("Inactive", StringComparison.OrdinalIgnoreCase)) status = "Inactive";
-                    else errors.Add("Status must be Active or Inactive");
+                    if (statusStr.Equals("Active", StringComparison.OrdinalIgnoreCase)) row.Status = "Active";
+                    else if (statusStr.Equals("Inactive", StringComparison.OrdinalIgnoreCase)) row.Status = "Inactive";
+                    else row.Errors.Add("Status must be Active or Inactive");
                 }
 
-                if (pw.Length == 0) errors.Add("Temporary password is required");
-                else if (pw.Length < 8) errors.Add("Temporary password needs at least 8 characters");
+                row.Pw = Cell(r, "password", "temporary_password", "temporary password");
+                if (row.Pw.Length == 0) row.Errors.Add("Password is required");
+                else if (row.Pw.Length < 8) row.Errors.Add("Password needs at least 8 characters");
 
-                var valid = errors.Count == 0;
-                if (valid)
-                    toInsert.Add((code, name, email, mobile.Length > 0 ? mobile : null, deptId, divId,
-                        desig.Length > 0 ? desig : null, mgrId, roleId, cap, status, pw));
+                // manager / "Reports to" reference — resolved in pass 2. Priority id, code, email.
+                var mgrIdRaw = CellInt(r, "manager_id");
+                var mgrCode = Cell(r, "manager_employee_code", "manager_code", "manager code", "reports_to_code");
+                var mgrEmail = Cell(r, "manager_email", "manager email", "manager", "reports_to", "reports to");
+                if (mgrIdRaw is int mid) { row.MgrKind = "id"; row.MgrVal = mid.ToString(); row.MgrDisplay = $"#{mid}"; }
+                else if (mgrCode.Length > 0) { row.MgrKind = "code"; row.MgrVal = mgrCode; row.MgrDisplay = mgrCode; }
+                else if (mgrEmail.Length > 0) { row.MgrKind = "email"; row.MgrVal = mgrEmail; row.MgrDisplay = mgrEmail; }
 
-                results.Add(new { row = i + 2, employee_code = code, name, email, role = roleName,
-                    department = deptName, status, valid, errors });
+                row.BaseValid = row.Errors.Count == 0;
+                parsed.Add(row);
             }
 
-            var validCount = toInsert.Count;
-            var invalidCount = rows.Count - validCount;
+            // identities available inside this file (from otherwise-valid rows), so a
+            // "Reports to" manager who is also being created here resolves too.
+            var batchCodes = parsed.Where(p => p.BaseValid).Select(p => p.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var batchEmails = parsed.Where(p => p.BaseValid).Select(p => p.Email).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // ---- pass 2: resolve managers against existing users, else this file ----
+            foreach (var row in parsed.Where(p => p.BaseValid))
+            {
+                switch (row.MgrKind)
+                {
+                    case "id":
+                        var mid = int.Parse(row.MgrVal);
+                        if (userIds.Contains(mid)) row.MgrId = mid;
+                        else row.Errors.Add($"manager_id {mid} does not exist");
+                        break;
+                    case "code":
+                        if (usersByCode.TryGetValue(row.MgrVal, out var c1)) row.MgrId = c1;
+                        else if (batchCodes.Contains(row.MgrVal)) row.MgrDeferred = true;
+                        else row.Errors.Add($"Manager '{row.MgrVal}' not found in the database or this file");
+                        break;
+                    case "email":
+                        if (usersByEmail.TryGetValue(row.MgrVal, out var e1)) row.MgrId = e1;
+                        else if (batchEmails.Contains(row.MgrVal)) row.MgrDeferred = true;
+                        else row.Errors.Add($"Manager '{row.MgrVal}' not found in the database or this file");
+                        break;
+                }
+            }
+
+            List<object> Results_() => parsed.Select(p => (object)new
+            {
+                row = p.Index, employee_code = p.Code, name = p.Name, email = p.Email,
+                role = p.RoleDisplay, department = p.DeptDisplay, reports_to = p.MgrDisplay,
+                status = p.Status, valid = p.Valid, errors = p.Errors
+            }).ToList();
+
+            var validRows = parsed.Where(p => p.Valid).ToList();
+            var invalidCount = parsed.Count - validRows.Count;
 
             if (!commit)
-                return Results.Json(new { commit = false, total = rows.Count, valid = validCount, invalid = invalidCount, rows = results });
+                return Results.Json(new { commit = false, total = rows.Count, valid = validRows.Count, invalid = invalidCount, rows = Results_() });
 
             var created = 0;
-            if (validCount > 0)
+            if (validRows.Count > 0)
                 await db.Tx<int>(async (conn, tx) =>
                 {
-                    foreach (var u in toInsert)
+                    // phase 1: insert every valid row (manager set when it already exists).
+                    var newByCode = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    var newByEmail = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var u in validRows)
                     {
-                        await conn.ExecuteAsync("""
+                        u.NewId = await conn.ExecuteScalarAsync<int>("""
                             INSERT INTO users (employee_code, name, email, mobile, password_hash, department_id,
                                                division_id, designation, manager_id, role_id, weekly_capacity_hours,
                                                status, must_change_password)
                             VALUES (@code, @name, @email, @mobile, @hash, @dept, @div, @desig, @mgr, @role, @cap, @status, 1)
+                            RETURNING id
                             """, new
                         {
-                            u.code, u.name, u.email, u.mobile,
-                            hash = Passwords.Hash(u.pw),
-                            dept = u.deptId, div = u.divId, desig = u.desig, mgr = u.mgrId,
-                            role = u.roleId, cap = u.cap, status = u.status
+                            code = u.Code, name = u.Name, email = u.Email, mobile = u.Mobile,
+                            hash = Passwords.Hash(u.Pw),
+                            dept = u.DeptId, div = u.DivId, desig = u.Desig, mgr = u.MgrId,
+                            role = u.RoleId, cap = u.Cap, status = u.Status
                         }, tx);
+                        newByCode[u.Code] = u.NewId;
+                        newByEmail[u.Email] = u.NewId;
                         created++;
+                    }
+
+                    // phase 2: link managers that were themselves created in this file.
+                    foreach (var u in validRows.Where(x => x.MgrDeferred))
+                    {
+                        int? mgr = u.MgrKind == "code"
+                            ? (newByCode.TryGetValue(u.MgrVal, out var a) ? a : usersByCode.TryGetValue(u.MgrVal, out var b2) ? b2 : (int?)null)
+                            : (newByEmail.TryGetValue(u.MgrVal, out var c) ? c : usersByEmail.TryGetValue(u.MgrVal, out var d3) ? d3 : (int?)null);
+                        if (mgr is int m)
+                            await conn.ExecuteAsync("UPDATE users SET manager_id = @m WHERE id = @id", new { m, id = u.NewId }, tx);
                     }
                     return 0;
                 });
 
             await Audit.LogActivity(db, ctx, "user", 0, "imported",
                 $"Bulk import: {created} user(s) created, {invalidCount} row(s) failed validation");
-            return Results.Json(new { commit = true, total = rows.Count, created, failed = invalidCount, rows = results });
+            return Results.Json(new { commit = true, total = rows.Count, created, failed = invalidCount, rows = Results_() });
         });
 
         app.MapPut("/api/users/{id:int}", async (HttpContext ctx, Db db, int id, B b) =>
@@ -658,6 +744,121 @@ public static class MasterEndpoints
 
             await Audit.LogActivity(db, ctx, m.Table, id, "created", $"Added {b.OptStr("name")}");
             return Results.Json(new { id }, statusCode: 201);
+        });
+
+        /* ---------------------------------------------------------------------
+           Bulk import for departments. Uses the same three department fields
+           (code, name, head) and the same rules as the manual Add-department
+           form: the name is required and must be unique (the departments table's
+           only uniqueness rule); code is optional (max 12 chars); head is
+           optional and resolved to head_user_id. Rows are validated first — only
+           valid rows are created, inside ONE transaction — and each row is
+           reported back with its exact error, mirroring the other modules'
+           bulk-import pattern. Same authorisation as the manual create.
+           -------------------------------------------------------------------- */
+        app.MapPost("/api/masters/departments/import", async (HttpContext ctx, Db db, B b) =>
+        {
+            var mu = (CurrentUser)ctx.Items["user"]!;
+            mu.RequireLevel(2);
+            mu.Require("masters.create");
+
+            var commit = b.Bool("commit");
+            var rows = b.ObjArray("rows");
+            if (rows.Count == 0) throw AppException.BadRequest("The file has no rows to import");
+            if (rows.Count > 1000) throw AppException.BadRequest("Please import at most 1000 rows at a time");
+
+            // The name-unique rule matches the DB constraint (case-sensitive).
+            var existingNames = (await db.Q("SELECT name FROM departments"))
+                .Select(r => (string)r.name).ToHashSet(StringComparer.Ordinal);
+            var usersByEmail = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var usersByCode = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var userIds = new HashSet<int>();
+            foreach (var u in await db.Q("SELECT id, email, employee_code FROM users"))
+            {
+                usersByEmail[(string)u.email] = (int)u.id;
+                usersByCode[(string)u.employee_code] = (int)u.id;
+                userIds.Add((int)u.id);
+            }
+
+            static string Cell(B r, params string[] keys)
+            {
+                foreach (var k in keys)
+                    if (r.TryGetValue(k, out var v))
+                    {
+                        var s = v.ValueKind switch
+                        {
+                            JsonValueKind.String => v.GetString(),
+                            JsonValueKind.Number => v.ToString(),
+                            _ => null
+                        };
+                        if (!string.IsNullOrWhiteSpace(s)) return s.Trim();
+                    }
+                return "";
+            }
+            static int? CellInt(B r, params string[] keys)
+            {
+                var s = Cell(r, keys);
+                return int.TryParse(s, out var n) ? n : (int?)null;
+            }
+
+            var results = new List<object>();
+            var toInsert = new List<(string? code, string name, int? head)>();
+            var seenNames = new HashSet<string>(StringComparer.Ordinal);
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var r = rows[i];
+                var errors = new List<string>();
+
+                var code = Cell(r, "code", "department_code");
+                var name = Cell(r, "name", "department", "department_name");
+
+                if (name.Length == 0) errors.Add("Name is required");
+                else if (name.Length > 80) errors.Add("Name must be 80 characters or fewer");
+                else
+                {
+                    if (existingNames.Contains(name)) errors.Add("A department with this name already exists");
+                    else if (!seenNames.Add(name)) errors.Add("Duplicate name within the file");
+                }
+                if (code.Length > 12) errors.Add("Code must be 12 characters or fewer");
+
+                // head (optional) — accept head_user_id, head_employee_code, or head_email.
+                int? head = null;
+                var headIdRaw = CellInt(r, "head_user_id");
+                var headCode = Cell(r, "head_employee_code", "head_code");
+                var headEmail = Cell(r, "head_email", "head");
+                if (headIdRaw is int hid) { if (userIds.Contains(hid)) head = hid; else errors.Add($"head_user_id {hid} does not exist"); }
+                else if (headCode.Length > 0) { if (usersByCode.TryGetValue(headCode, out var h1)) head = h1; else errors.Add($"Head '{headCode}' not found"); }
+                else if (headEmail.Length > 0) { if (usersByEmail.TryGetValue(headEmail, out var h2)) head = h2; else errors.Add($"Head '{headEmail}' not found"); }
+
+                var valid = errors.Count == 0;
+                if (valid) toInsert.Add((code.Length > 0 ? code : null, name, head));
+                results.Add(new { row = i + 2, code, name, valid, errors });
+            }
+
+            var validCount = toInsert.Count;
+            var invalidCount = rows.Count - validCount;
+
+            if (!commit)
+                return Results.Json(new { commit = false, total = rows.Count, valid = validCount, invalid = invalidCount, rows = results });
+
+            var created = 0;
+            if (validCount > 0)
+                await db.Tx<int>(async (conn, tx) =>
+                {
+                    foreach (var d in toInsert)
+                    {
+                        await conn.ExecuteAsync(
+                            "INSERT INTO departments (code, name, head_user_id) VALUES (@code, @name, @head)",
+                            new { d.code, d.name, head = d.head }, tx);
+                        created++;
+                    }
+                    return 0;
+                });
+
+            await Audit.LogActivity(db, ctx, "departments", 0, "imported",
+                $"Bulk import: {created} department(s) created, {invalidCount} row(s) failed validation");
+            return Results.Json(new { commit = true, total = rows.Count, created, failed = invalidCount, rows = results });
         });
 
         app.MapPut("/api/masters/{master}/{id:int}", async (HttpContext ctx, Db db, string master, int id, B b) =>

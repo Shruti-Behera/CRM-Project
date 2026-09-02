@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { get, post, put, del, patch } from '../lib/api.js';
 import { Card, Pill, Loading, Empty, ErrorNote, Modal } from '../components/Bits.jsx';
 import { useAuth } from '../lib/auth.jsx';
+import { downloadXLSX, readXLSX } from '../lib/xlsx.js';
+
+// Bulk-import columns = the same fields as the manual Add-department form.
+const IMPORT_COLS = ['code', 'name'];
+const stamp = () => new Date().toISOString().slice(0, 10);
 
 export default function Departments() {
   const { can } = useAuth();
@@ -47,6 +52,63 @@ export default function Departments() {
     catch (e) { setErr(e.message); }
   };
 
+  /* ---- bulk import (same fields/rules as manual create) ---- */
+  const [impOpen, setImpOpen] = useState(false);
+  const [impRows, setImpRows] = useState([]);
+  const [impPreview, setImpPreview] = useState(null);
+  const [impResult, setImpResult] = useState(null);
+  const [impBusy, setImpBusy] = useState(false);
+  const [impErr, setImpErr] = useState('');
+  const [impFile, setImpFile] = useState('');
+
+  const openImport = () => {
+    setImpOpen(true); setImpRows([]); setImpPreview(null);
+    setImpResult(null); setImpErr(''); setImpFile('');
+  };
+
+  const downloadTemplate = () => {
+    const example = { code: 'FIN', name: 'Finance' };
+    const sheet = { name: 'Departments', headers: IMPORT_COLS, rows: [IMPORT_COLS.map(c => example[c] ?? '')] };
+    const ref = {
+      name: 'Reference', headers: ['Field', 'Notes'], rows: [
+        ['name', 'required, must be unique (same rule as manual create)'],
+        ['code', 'optional, up to 12 characters']
+      ]
+    };
+    downloadXLSX(`ashika-departments-template-${stamp()}.xlsx`, [sheet, ref]);
+  };
+
+  const onImportFile = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setImpErr(''); setImpResult(null); setImpPreview(null); setImpBusy(true); setImpFile(file.name);
+    try {
+      const parsed = await readXLSX(file);
+      if (!parsed.length) { setImpErr('That file has no data rows.'); return; }
+      setImpRows(parsed);
+      setImpPreview(await post('/masters/departments/import', { rows: parsed, commit: false }));
+    } catch (err) { setImpErr(err.message); }
+    finally { setImpBusy(false); e.target.value = ''; }
+  };
+
+  const confirmImport = async () => {
+    if (!impPreview?.valid) return;
+    setImpBusy(true); setImpErr('');
+    try {
+      setImpResult(await post('/masters/departments/import', { rows: impRows, commit: true }));
+      load();
+    } catch (err) { setImpErr(err.message); }
+    finally { setImpBusy(false); }
+  };
+
+  const downloadFailed = () => {
+    const serverRows = (impResult || impPreview)?.rows || [];
+    const failed = serverRows.map((sr, i) => ({ sr, orig: impRows[i] || {} })).filter(x => !x.sr.valid);
+    if (!failed.length) return;
+    const headers = [...IMPORT_COLS, 'errors'];
+    const out = failed.map(({ sr, orig }) => [...IMPORT_COLS.map(c => orig[c] ?? ''), (sr.errors || []).join('; ')]);
+    downloadXLSX(`ashika-departments-import-errors-${stamp()}.xlsx`, [{ name: 'Failed rows', headers, rows: out }]);
+  };
+
   if (err && !rows) return <ErrorNote>{err}</ErrorNote>;
   if (!rows) return <Loading />;
 
@@ -56,6 +118,7 @@ export default function Departments() {
         <div><div className="eyebrow">Organisation structure</div><h3>Departments</h3></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <input placeholder="Search…" value={q} style={{ width: 200 }} onChange={e => setQ(e.target.value)} />
+          {can('masters.create') && <button className="btn" onClick={openImport}>Import</button>}
           {can('masters.create') && <button className="btn primary" onClick={openAdd}>Add department</button>}
         </div>
       </div>
@@ -89,6 +152,78 @@ export default function Departments() {
             <div><label>Code</label><input value={form.code} onChange={e => setF('code', e.target.value)} /></div>
             <div><label>Name</label><input value={form.name} onChange={e => setF('name', e.target.value)} /></div>
           </div>
+        </Modal>
+      )}
+
+      {impOpen && (
+        <Modal title="Import departments" busy={impBusy}
+          saveLabel={impResult ? 'Done'
+            : impPreview ? (impPreview.valid ? `Create ${impPreview.valid}` : 'Nothing to import')
+            : 'Import'}
+          onClose={() => setImpOpen(false)}
+          onSave={impResult ? () => setImpOpen(false) : impPreview ? confirmImport : () => {}}>
+          {impErr && <ErrorNote>{impErr}</ErrorNote>}
+
+          {!impPreview && !impResult && (
+            <div>
+              <p style={{ fontSize: 13, marginTop: 0 }}>
+                Upload an <b>.xlsx</b> or <b>.csv</b> with one row per department. Columns: <b>code</b> and <b>name</b> —
+                the same fields as Add department. Name is required and must be unique. Every row is validated before
+                anything is created.
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn" onClick={downloadTemplate}>Download template</button>
+                <label className="btn primary" style={{ cursor: 'pointer', margin: 0 }}>
+                  {impBusy ? 'Reading…' : 'Choose file'}
+                  <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={onImportFile} />
+                </label>
+                {impFile && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{impFile}</span>}
+              </div>
+            </div>
+          )}
+
+          {impPreview && !impResult && (
+            <div>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 13, alignItems: 'center' }}>
+                <b style={{ color: 'var(--green)' }}>{impPreview.valid} valid</b>
+                <b style={{ color: 'var(--red)' }}>{impPreview.invalid} invalid</b>
+                <span style={{ color: 'var(--muted)' }}>of {impPreview.total} rows</span>
+                {impPreview.invalid > 0 &&
+                  <button className="btn" style={{ padding: '2px 8px', marginLeft: 'auto' }} onClick={downloadFailed}>Download invalid rows</button>}
+              </div>
+              <div style={{ maxHeight: 320, overflow: 'auto' }}>
+                <table className="tbl">
+                  <thead><tr><th>#</th><th>Code</th><th>Name</th><th>Result</th></tr></thead>
+                  <tbody>
+                    {impPreview.rows.map((r, i) => (
+                      <tr key={i} style={{ background: r.valid ? '' : '#FFF5F5' }}>
+                        <td className="mono" style={{ fontSize: 11.5 }}>{r.row}</td>
+                        <td className="mono" style={{ fontSize: 12 }}>{r.code || '—'}</td>
+                        <td style={{ fontSize: 12.5 }}>{r.name || '—'}</td>
+                        <td style={{ fontSize: 12 }}>
+                          {r.valid ? <Pill kind="p-done">Ready</Pill>
+                            : <span style={{ color: 'var(--red)' }}>{r.errors.join('; ')}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 0 }}>Only valid rows are created, in one transaction. Invalid rows are skipped.</p>
+            </div>
+          )}
+
+          {impResult && (
+            <div>
+              <div style={{ display: 'flex', gap: 16, fontSize: 14, marginBottom: 10 }}>
+                <b style={{ color: 'var(--green)' }}>{impResult.created} created</b>
+                <b style={{ color: impResult.failed ? 'var(--red)' : 'var(--muted)' }}>{impResult.failed} failed</b>
+                <span style={{ color: 'var(--muted)' }}>of {impResult.total} rows</span>
+              </div>
+              {impResult.failed > 0 &&
+                <button className="btn" onClick={downloadFailed}>Download failed rows with reasons</button>}
+            </div>
+          )}
         </Modal>
       )}
     </>

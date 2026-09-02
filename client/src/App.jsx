@@ -48,16 +48,6 @@ export default function App() {
 
   if (loading) return <Loading />;
 
-  // Bulk-imported users must replace their temporary password before they can
-  // use anything else. This gate stays until the flag is cleared server-side.
-  if (user.must_change_password) return <ForcePassword user={user} />;
-
-  // The Masters module (Users & rights, Category & project, Departments,
-  // Data & backup, Settings) is reachable only by Level 1 & 2. Anyone else who
-  // reaches these routes by URL is bounced to their workspace home. This mirrors
-  // the backend RequireLevel(2) gate so it is not merely a hidden menu.
-  const mastersOk = (user?.level ?? 99) <= 2;
-
   if (!user) {
     return (
       <Routes>
@@ -67,6 +57,16 @@ export default function App() {
       </Routes>
     );
   }
+
+  // Bulk-imported users must replace their temporary password before they can
+  // use anything else. This gate stays until the flag is cleared server-side.
+  if (user.must_change_password) return <ForcePassword user={user} />;
+
+  // The Masters module (Users & rights, Category & project, Departments,
+  // Data & backup, Settings) is reachable only by Level 1 & 2. Anyone else who
+  // reaches these routes by URL is bounced to their workspace home. This mirrors
+  // the backend RequireLevel(2) gate so it is not merely a hidden menu.
+  const mastersOk = (user?.level ?? 99) <= 2;
 
   return (
     <NotificationsProvider>

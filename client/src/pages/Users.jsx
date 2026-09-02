@@ -4,9 +4,14 @@ import { Card, Pill, Avatar, Loading, Empty, ErrorNote, Modal } from '../compone
 import { useAuth } from '../lib/auth.jsx';
 import { downloadXLSX, readXLSX } from '../lib/xlsx.js';
 
-// Columns for the bulk-upload template — same fields as the Add-user form.
+// Bulk-upload columns mirror the manual Add-user form's fields exactly, in the
+// same order: Employee ID, Full name, Email, Mobile, Department, Banking division,
+// Designation, Reports to (manager), Access level (role), Weekly capacity, Status,
+// Password. Department/division/role/manager are given by name/email and resolved
+// to the same ids the manual dropdowns use; the password is stored as a temporary
+// one the user must change on first sign-in.
 const IMPORT_COLS = ['employee_code', 'name', 'email', 'mobile', 'department', 'division',
-  'designation', 'manager_email', 'role', 'weekly_capacity_hours', 'status', 'temporary_password'];
+  'designation', 'manager_email', 'role', 'weekly_capacity_hours', 'status', 'password'];
 const stamp = () => new Date().toISOString().slice(0, 10);
 
 // Five-tier hierarchy. Level 1 (Super Admin) is the only tier that can
@@ -126,17 +131,18 @@ export default function Users() {
       employee_code: 'EMP1001', name: 'Asha Rao', email: 'asha.rao@example.com',
       mobile: '+91 90000 00000', department: depts[0]?.name || '', division: divisions[0]?.name || '',
       designation: 'Analyst', manager_email: '', role: l5.name || 'Executive',
-      weekly_capacity_hours: '40', status: 'Active', temporary_password: 'Temp@1234'
+      weekly_capacity_hours: '40', status: 'Active', password: 'Temp@1234'
     };
     const users = { name: 'Users', headers: IMPORT_COLS, rows: [IMPORT_COLS.map(c => example[c] ?? '')] };
     const ref = {
-      name: 'Reference', headers: ['Field', 'Accepted values'], rows: [
-        ['role', roles.map(r => r.name).join(', ')],
+      name: 'Reference', headers: ['Field (matches Add-user form)', 'Accepted values'], rows: [
+        ['role  (Access level)', roles.map(r => `${r.name} (L${r.level})`).join(', ')],
         ['department', depts.map(d => d.name).join(', ')],
-        ['division', divisions.map(d => d.name).join(', ')],
+        ['division  (Banking division)', divisions.map(d => d.name).join(', ')],
+        ['manager_email  (Reports to)', 'email of an existing user (optional) — same as picking one in the dropdown'],
         ['status', 'Active, Inactive'],
-        ['manager_email', 'email of an existing user (optional)'],
-        ['temporary_password', 'min 8 characters — the user must change it on first sign-in']
+        ['weekly_capacity_hours', 'number, defaults to 40'],
+        ['password', 'min 8 characters — stored as a temporary password the user must change on first sign-in']
       ]
     };
     downloadXLSX(`ashika-users-template-${stamp()}.xlsx`, [users, ref]);
@@ -330,9 +336,10 @@ export default function Users() {
           {!impPreview && !impResult && (
             <div>
               <p style={{ fontSize: 13, marginTop: 0 }}>
-                Upload an <b>.xlsx</b> with one row per user. Columns match the Add-user form: employee_code, name,
-                email, mobile, department, division, designation, manager_email, role, weekly_capacity_hours, status
-                and temporary_password. Every row is validated before anything is created.
+                Upload an <b>.xlsx</b> with one row per user. Columns are the same fields as the Add-user form:
+                employee_code, name, email, mobile, department, division, designation, manager_email, role,
+                weekly_capacity_hours, status and password. Each row is validated and created exactly like a
+                manual user (the password is temporary — the user must reset it on first sign-in).
               </p>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <button className="btn" onClick={downloadTemplate}>Download template</button>
@@ -360,7 +367,7 @@ export default function Users() {
               </div>
               <div style={{ maxHeight: 320, overflow: 'auto' }}>
                 <table className="tbl">
-                  <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Result</th></tr></thead>
+                  <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Reports to</th><th>Status</th><th>Result</th></tr></thead>
                   <tbody>
                     {impPreview.rows.map((r, i) => (
                       <tr key={i} style={{ background: r.valid ? '' : '#FFF5F5' }}>
@@ -368,6 +375,7 @@ export default function Users() {
                         <td style={{ fontSize: 12.5 }}>{r.name || '—'}</td>
                         <td style={{ fontSize: 12.5 }}>{r.email || '—'}</td>
                         <td style={{ fontSize: 12.5 }}>{r.role || '—'}</td>
+                        <td style={{ fontSize: 12.5 }}>{r.reports_to || '—'}</td>
                         <td style={{ fontSize: 12.5 }}>{r.status}</td>
                         <td style={{ fontSize: 12 }}>
                           {r.valid ? <Pill kind="p-done">Ready</Pill>
