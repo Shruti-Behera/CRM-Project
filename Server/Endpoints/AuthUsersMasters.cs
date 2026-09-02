@@ -62,6 +62,7 @@ public static class AuthEndpoints
           scope = u.ScopeKind,
           department = u.Department ?? "",
           division = u.Division ?? "",
+          must_change_password = u.MustChangePassword,
           permissions = u.Permissions?.ToArray() ?? Array.Empty<string>()
       });
   });
@@ -191,7 +192,7 @@ public static class AuthEndpoints
             if (next.Length < 8) throw AppException.BadRequest("The new password needs at least 8 characters");
             if (next == current) throw AppException.BadRequest("The new password must be different from your current one");
 
-            await db.Exec("UPDATE users SET password_hash = @h WHERE id = @id",
+            await db.Exec("UPDATE users SET password_hash = @h, must_change_password = 0 WHERE id = @id",
                 new { h = Passwords.Hash(next), id = u.Id });
 
             await Audit.LogActivity(db, ctx, "user", u.Id, "password_changed", "Changed their password");
@@ -275,6 +276,182 @@ public static class UserEndpoints
                 "Your account has been created. Sign in with the credentials your administrator shared.",
                 "user", id, me.Id);
             return Results.Json(new { id }, statusCode: 201);
+        });
+
+        /* ---------------------------------------------------------------------
+           Bulk user upload. The admin uploads a spreadsheet that the client
+           parses to JSON rows; this endpoint validates every row against the
+           SAME rules the single-user create uses, then — only when commit=true
+           — inserts the valid rows inside ONE transaction so a mid-batch failure
+           leaves nothing behind. Passwords from the sheet are hashed with the
+           existing hasher and the account is flagged must_change_password so the
+           person must set their own password on first sign-in. Duplicates (in
+           the database or within the file) and any validation error are reported
+           per row and never inserted. commit=false is a dry run for the preview.
+           -------------------------------------------------------------------- */
+        app.MapPost("/api/users/import", async (HttpContext ctx, Db db, B b) =>
+        {
+            var me = (CurrentUser)ctx.Items["user"]!;
+            me.RequireSuperAdmin();
+
+            var commit = b.Bool("commit");
+            var rows = b.ObjArray("rows");
+            if (rows.Count == 0) throw AppException.BadRequest("The file has no rows to import");
+            if (rows.Count > 1000) throw AppException.BadRequest("Please import at most 1000 rows at a time");
+
+            // Lookups, loaded once, matched case-insensitively by their display name.
+            var roleByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in await db.Q("SELECT id, name FROM roles")) roleByName[(string)r.name] = (int)r.id;
+            var deptByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in await db.Q("SELECT id, name FROM departments")) deptByName[(string)d.name] = (int)d.id;
+            var divByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in await db.Q("SELECT id, name FROM divisions")) divByName[(string)d.name] = (int)d.id;
+            var existingEmails = (await db.Q("SELECT email FROM users"))
+                .Select(r => (string)r.email).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var existingCodes = (await db.Q("SELECT employee_code AS code FROM users"))
+                .Select(r => (string)r.code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var usersByEmail = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var u in await db.Q("SELECT id, email FROM users")) usersByEmail[(string)u.email] = (int)u.id;
+
+            static string Cell(B r, params string[] keys)
+            {
+                foreach (var k in keys)
+                    if (r.TryGetValue(k, out var v))
+                    {
+                        var s = v.ValueKind switch
+                        {
+                            JsonValueKind.String => v.GetString(),
+                            JsonValueKind.Number => v.ToString(),
+                            JsonValueKind.True => "true",
+                            JsonValueKind.False => "false",
+                            _ => null
+                        };
+                        if (!string.IsNullOrWhiteSpace(s)) return s.Trim();
+                    }
+                return "";
+            }
+            static bool ValidEmail(string s) =>
+                System.Text.RegularExpressions.Regex.IsMatch(s, @"^[^@\s]+@[^@\s]+\.[^@\s]+$");
+
+            var results = new List<object>();
+            var toInsert = new List<(string code, string name, string email, string? mobile, int? deptId,
+                int? divId, string? desig, int? mgrId, int roleId, decimal cap, string status, string pw)>();
+            var seenEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var r = rows[i];
+                var errors = new List<string>();
+
+                var code = Cell(r, "employee_code", "employee code", "code");
+                var name = Cell(r, "name", "full name");
+                var email = Cell(r, "email");
+                var mobile = Cell(r, "mobile", "phone");
+                var deptName = Cell(r, "department", "department_name");
+                var divName = Cell(r, "division");
+                var desig = Cell(r, "designation", "title");
+                var mgrEmail = Cell(r, "manager_email", "manager email", "manager");
+                var roleName = Cell(r, "role", "role_name", "access level");
+                var capStr = Cell(r, "weekly_capacity_hours", "capacity", "weekly capacity");
+                var statusStr = Cell(r, "status");
+                var pw = Cell(r, "temporary_password", "temporary password", "password");
+
+                if (code.Length == 0) errors.Add("Employee code is required");
+                if (name.Length == 0) errors.Add("Name is required");
+                if (email.Length == 0) errors.Add("Email is required");
+                else if (!ValidEmail(email)) errors.Add("Email format is invalid");
+
+                if (email.Length > 0)
+                {
+                    if (existingEmails.Contains(email)) errors.Add("A user with this email already exists");
+                    else if (!seenEmails.Add(email)) errors.Add("Duplicate email within the file");
+                }
+                if (code.Length > 0)
+                {
+                    if (existingCodes.Contains(code)) errors.Add("A user with this employee code already exists");
+                    else if (!seenCodes.Add(code)) errors.Add("Duplicate employee code within the file");
+                }
+
+                int roleId = 0;
+                if (roleName.Length == 0) errors.Add("Role is required");
+                else if (!roleByName.TryGetValue(roleName, out roleId)) errors.Add($"Unknown role '{roleName}'");
+
+                int? deptId = null;
+                if (deptName.Length > 0)
+                {
+                    if (deptByName.TryGetValue(deptName, out var did)) deptId = did;
+                    else errors.Add($"Unknown department '{deptName}'");
+                }
+                int? divId = null;
+                if (divName.Length > 0)
+                {
+                    if (divByName.TryGetValue(divName, out var vid)) divId = vid;
+                    else errors.Add($"Unknown division '{divName}'");
+                }
+                int? mgrId = null;
+                if (mgrEmail.Length > 0)
+                {
+                    if (usersByEmail.TryGetValue(mgrEmail, out var mid)) mgrId = mid;
+                    else errors.Add($"Manager '{mgrEmail}' not found (managers must already exist)");
+                }
+
+                decimal cap = 40m;
+                if (capStr.Length > 0 && !decimal.TryParse(capStr, out cap))
+                { errors.Add("Weekly capacity must be a number"); cap = 40m; }
+
+                string status = "Active";
+                if (statusStr.Length > 0)
+                {
+                    if (statusStr.Equals("Active", StringComparison.OrdinalIgnoreCase)) status = "Active";
+                    else if (statusStr.Equals("Inactive", StringComparison.OrdinalIgnoreCase)) status = "Inactive";
+                    else errors.Add("Status must be Active or Inactive");
+                }
+
+                if (pw.Length == 0) errors.Add("Temporary password is required");
+                else if (pw.Length < 8) errors.Add("Temporary password needs at least 8 characters");
+
+                var valid = errors.Count == 0;
+                if (valid)
+                    toInsert.Add((code, name, email, mobile.Length > 0 ? mobile : null, deptId, divId,
+                        desig.Length > 0 ? desig : null, mgrId, roleId, cap, status, pw));
+
+                results.Add(new { row = i + 2, employee_code = code, name, email, role = roleName,
+                    department = deptName, status, valid, errors });
+            }
+
+            var validCount = toInsert.Count;
+            var invalidCount = rows.Count - validCount;
+
+            if (!commit)
+                return Results.Json(new { commit = false, total = rows.Count, valid = validCount, invalid = invalidCount, rows = results });
+
+            var created = 0;
+            if (validCount > 0)
+                await db.Tx<int>(async (conn, tx) =>
+                {
+                    foreach (var u in toInsert)
+                    {
+                        await conn.ExecuteAsync("""
+                            INSERT INTO users (employee_code, name, email, mobile, password_hash, department_id,
+                                               division_id, designation, manager_id, role_id, weekly_capacity_hours,
+                                               status, must_change_password)
+                            VALUES (@code, @name, @email, @mobile, @hash, @dept, @div, @desig, @mgr, @role, @cap, @status, 1)
+                            """, new
+                        {
+                            u.code, u.name, u.email, u.mobile,
+                            hash = Passwords.Hash(u.pw),
+                            dept = u.deptId, div = u.divId, desig = u.desig, mgr = u.mgrId,
+                            role = u.roleId, cap = u.cap, status = u.status
+                        }, tx);
+                        created++;
+                    }
+                    return 0;
+                });
+
+            await Audit.LogActivity(db, ctx, "user", 0, "imported",
+                $"Bulk import: {created} user(s) created, {invalidCount} row(s) failed validation");
+            return Results.Json(new { commit = true, total = rows.Count, created, failed = invalidCount, rows = results });
         });
 
         app.MapPut("/api/users/{id:int}", async (HttpContext ctx, Db db, int id, B b) =>

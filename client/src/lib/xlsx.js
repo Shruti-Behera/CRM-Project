@@ -35,3 +35,30 @@ export function downloadXLSX(filename, sheets) {
   });
   XLSX.writeFile(wb, filename);
 }
+
+/* Read an uploaded .xlsx/.csv File into an array of plain row objects, keyed by
+   the (trimmed, lower-cased) header row. Every value comes back as a formatted
+   string so numbers like employee codes or capacities survive intact. Uses the
+   same SheetJS library (window.XLSX). Returns a Promise. */
+export function readXLSX(file) {
+  return new Promise((resolve, reject) => {
+    const XLSX = typeof window !== 'undefined' ? window.XLSX : null;
+    if (!XLSX) return reject(new Error('Excel support is unavailable in this browser'));
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the file'));
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+        const rows = raw.map(r => {
+          const o = {};
+          for (const k in r) o[String(k).trim().toLowerCase()] = typeof r[k] === 'string' ? r[k].trim() : r[k];
+          return o;
+        }).filter(r => Object.values(r).some(v => String(v ?? '').trim() !== ''));
+        resolve(rows);
+      } catch { reject(new Error('That file is not a valid spreadsheet')); }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}

@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { get, post, put, del } from '../lib/api.js';
 import { Card, Pill, Avatar, Loading, Empty, ErrorNote, Modal } from '../components/Bits.jsx';
 import { useAuth } from '../lib/auth.jsx';
+import { downloadXLSX, readXLSX } from '../lib/xlsx.js';
+
+// Columns for the bulk-upload template — same fields as the Add-user form.
+const IMPORT_COLS = ['employee_code', 'name', 'email', 'mobile', 'department', 'division',
+  'designation', 'manager_email', 'role', 'weekly_capacity_hours', 'status', 'temporary_password'];
+const stamp = () => new Date().toISOString().slice(0, 10);
 
 // Five-tier hierarchy. Level 1 (Super Admin) is the only tier that can
 // administer users; scope decides which records each tier can see.
@@ -100,6 +106,73 @@ export default function Users() {
     try { await put(`/users/${u.id}`, { status: 'Active' }); load(); } catch (e) { setErr(e.message); }
   };
 
+  /* ---- bulk import ---- */
+  const [impOpen, setImpOpen] = useState(false);
+  const [impRows, setImpRows] = useState([]);        // parsed spreadsheet rows
+  const [impPreview, setImpPreview] = useState(null); // dry-run result
+  const [impResult, setImpResult] = useState(null);   // committed result
+  const [impBusy, setImpBusy] = useState(false);
+  const [impErr, setImpErr] = useState('');
+  const [impFile, setImpFile] = useState('');
+
+  const openImport = () => {
+    setImpOpen(true); setImpRows([]); setImpPreview(null);
+    setImpResult(null); setImpErr(''); setImpFile('');
+  };
+
+  const downloadTemplate = () => {
+    const l5 = roles.find(r => r.level === 5) || roles[roles.length - 1] || {};
+    const example = {
+      employee_code: 'EMP1001', name: 'Asha Rao', email: 'asha.rao@example.com',
+      mobile: '+91 90000 00000', department: depts[0]?.name || '', division: divisions[0]?.name || '',
+      designation: 'Analyst', manager_email: '', role: l5.name || 'Executive',
+      weekly_capacity_hours: '40', status: 'Active', temporary_password: 'Temp@1234'
+    };
+    const users = { name: 'Users', headers: IMPORT_COLS, rows: [IMPORT_COLS.map(c => example[c] ?? '')] };
+    const ref = {
+      name: 'Reference', headers: ['Field', 'Accepted values'], rows: [
+        ['role', roles.map(r => r.name).join(', ')],
+        ['department', depts.map(d => d.name).join(', ')],
+        ['division', divisions.map(d => d.name).join(', ')],
+        ['status', 'Active, Inactive'],
+        ['manager_email', 'email of an existing user (optional)'],
+        ['temporary_password', 'min 8 characters — the user must change it on first sign-in']
+      ]
+    };
+    downloadXLSX(`ashika-users-template-${stamp()}.xlsx`, [users, ref]);
+  };
+
+  const onImportFile = async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    setImpErr(''); setImpResult(null); setImpPreview(null); setImpBusy(true); setImpFile(file.name);
+    try {
+      const rows = await readXLSX(file);
+      if (!rows.length) { setImpErr('That file has no data rows.'); return; }
+      setImpRows(rows);
+      setImpPreview(await post('/users/import', { rows, commit: false }));
+    } catch (err) { setImpErr(err.message); }
+    finally { setImpBusy(false); e.target.value = ''; }
+  };
+
+  const confirmImport = async () => {
+    if (!impPreview?.valid) return;
+    setImpBusy(true); setImpErr('');
+    try {
+      setImpResult(await post('/users/import', { rows: impRows, commit: true }));
+      load();
+    } catch (err) { setImpErr(err.message); }
+    finally { setImpBusy(false); }
+  };
+
+  const downloadFailed = () => {
+    const serverRows = (impResult || impPreview)?.rows || [];
+    const failed = serverRows.map((sr, i) => ({ sr, orig: impRows[i] || {} })).filter(x => !x.sr.valid);
+    if (!failed.length) return;
+    const headers = [...IMPORT_COLS, 'errors'];
+    const out = failed.map(({ sr, orig }) => [...IMPORT_COLS.map(c => orig[c] ?? ''), (sr.errors || []).join('; ')]);
+    downloadXLSX(`ashika-users-import-errors-${stamp()}.xlsx`, [{ name: 'Failed rows', headers, rows: out }]);
+  };
+
   /* ---- rights ---- */
   const openRights = async (u) => {
     try {
@@ -139,6 +212,7 @@ export default function Users() {
         <div><div className="eyebrow">Who sees what</div><h3>Users &amp; rights</h3></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <input placeholder="Search users…" value={q} style={{ width: 200 }} onChange={e => setQ(e.target.value)} />
+          {admin && <button className="btn" onClick={openImport}>Import users</button>}
           {admin && <button className="btn primary" onClick={openAdd}>Add user</button>}
         </div>
       </div>
@@ -241,6 +315,89 @@ export default function Users() {
           <p style={{ fontSize: 12, color: 'var(--muted)', margin: '10px 0 0' }}>
             A new user starts on the level defaults. Use the <b>Rights</b> button to tick individual permissions afterwards.
           </p>
+        </Modal>
+      )}
+
+      {impOpen && (
+        <Modal title="Import users" busy={impBusy}
+          saveLabel={impResult ? 'Done'
+            : impPreview ? (impPreview.valid ? `Create ${impPreview.valid} user${impPreview.valid === 1 ? '' : 's'}` : 'Nothing to import')
+            : 'Import'}
+          onClose={() => setImpOpen(false)}
+          onSave={impResult ? () => setImpOpen(false) : impPreview ? confirmImport : () => {}}>
+          {impErr && <ErrorNote>{impErr}</ErrorNote>}
+
+          {!impPreview && !impResult && (
+            <div>
+              <p style={{ fontSize: 13, marginTop: 0 }}>
+                Upload an <b>.xlsx</b> with one row per user. Columns match the Add-user form: employee_code, name,
+                email, mobile, department, division, designation, manager_email, role, weekly_capacity_hours, status
+                and temporary_password. Every row is validated before anything is created.
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn" onClick={downloadTemplate}>Download template</button>
+                <label className="btn primary" style={{ cursor: 'pointer', margin: 0 }}>
+                  {impBusy ? 'Reading…' : 'Choose Excel file'}
+                  <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={onImportFile} />
+                </label>
+                {impFile && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{impFile}</span>}
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 0 }}>
+                Passwords are hashed before storage — plaintext is never saved. Imported users must reset their
+                temporary password the first time they sign in.
+              </p>
+            </div>
+          )}
+
+          {impPreview && !impResult && (
+            <div>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 13, alignItems: 'center' }}>
+                <b style={{ color: 'var(--green)' }}>{impPreview.valid} valid</b>
+                <b style={{ color: 'var(--red)' }}>{impPreview.invalid} invalid</b>
+                <span style={{ color: 'var(--muted)' }}>of {impPreview.total} rows</span>
+                {impPreview.invalid > 0 &&
+                  <button className="btn" style={{ padding: '2px 8px', marginLeft: 'auto' }} onClick={downloadFailed}>Download invalid rows</button>}
+              </div>
+              <div style={{ maxHeight: 320, overflow: 'auto' }}>
+                <table className="tbl">
+                  <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Result</th></tr></thead>
+                  <tbody>
+                    {impPreview.rows.map((r, i) => (
+                      <tr key={i} style={{ background: r.valid ? '' : '#FFF5F5' }}>
+                        <td className="mono" style={{ fontSize: 11.5 }}>{r.row}</td>
+                        <td style={{ fontSize: 12.5 }}>{r.name || '—'}</td>
+                        <td style={{ fontSize: 12.5 }}>{r.email || '—'}</td>
+                        <td style={{ fontSize: 12.5 }}>{r.role || '—'}</td>
+                        <td style={{ fontSize: 12.5 }}>{r.status}</td>
+                        <td style={{ fontSize: 12 }}>
+                          {r.valid ? <Pill kind="p-done">Ready</Pill>
+                            : <span style={{ color: 'var(--red)' }}>{r.errors.join('; ')}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 0 }}>
+                Only valid rows are created, inside one transaction. Invalid rows are skipped.
+              </p>
+            </div>
+          )}
+
+          {impResult && (
+            <div>
+              <div style={{ display: 'flex', gap: 16, fontSize: 14, marginBottom: 10 }}>
+                <b style={{ color: 'var(--green)' }}>{impResult.created} created</b>
+                <b style={{ color: impResult.failed ? 'var(--red)' : 'var(--muted)' }}>{impResult.failed} failed</b>
+                <span style={{ color: 'var(--muted)' }}>of {impResult.total} rows</span>
+              </div>
+              {impResult.failed > 0 &&
+                <button className="btn" onClick={downloadFailed}>Download failed rows with reasons</button>}
+              <p style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 0 }}>
+                Imported users can sign in with their temporary password and will be prompted to set a new one.
+              </p>
+            </div>
+          )}
         </Modal>
       )}
 

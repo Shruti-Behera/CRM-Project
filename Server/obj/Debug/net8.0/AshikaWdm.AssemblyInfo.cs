@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AshikaWdm")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+44d6e3a5867b6cd1bdcbcd96033d17a26bcbee66")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9098535ba99ec963c4e4f1e3e5306206ba290612")]
 [assembly: System.Reflection.AssemblyProductAttribute("AshikaWdm")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AshikaWdm")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

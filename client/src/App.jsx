@@ -4,6 +4,7 @@ import { NotificationsProvider } from "./lib/notifications.jsx";
 import { Loading } from "./components/Bits.jsx";
 import Login from "./pages/Login.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
+import ForcePassword from "./pages/ForcePassword.jsx";
 import Shell from "./components/Shell.jsx";
 import BankingDashboard from "./pages/BankingDashboard.jsx";
 import Accounts from "./pages/Accounts.jsx";
@@ -46,6 +47,10 @@ export default function App() {
   const { user, loading } = useAuth();
 
   if (loading) return <Loading />;
+
+  // Bulk-imported users must replace their temporary password before they can
+  // use anything else. This gate stays until the flag is cleared server-side.
+  if (user.must_change_password) return <ForcePassword user={user} />;
 
   // The Masters module (Users & rights, Category & project, Departments,
   // Data & backup, Settings) is reachable only by Level 1 & 2. Anyone else who

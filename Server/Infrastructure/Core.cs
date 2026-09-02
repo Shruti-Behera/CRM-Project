@@ -184,6 +184,7 @@ public sealed class CurrentUser
     public string? Department { get; init; }
     public string? Division { get; init; }
     public HashSet<string> Permissions { get; init; } = [];
+    public int MustChangePassword { get; init; }        // 1 = force a password reset on next sign-in
     public int[]? People { get; set; }                  // the reporting tree, null when scope is 'all'
 
     public bool Can(string slug) => Permissions.Contains(slug);
@@ -225,7 +226,7 @@ public static class Scope
     {
         var u = await db.One("""
             SELECT u.id, u.employee_code, u.name, u.email, u.status,
-                   u.department_id, u.division_id,
+                   u.department_id, u.division_id, u.must_change_password,
                    r.level, r.scope, d.name AS department, dv.name AS division
               FROM users u
               JOIN roles r ON r.id = u.role_id
@@ -263,6 +264,7 @@ public static class Scope
             DivisionId = (int?)u.division_id,
             Department = (string?)u.department,
             Division = (string?)u.division,
+            MustChangePassword = Convert.ToInt32(u.must_change_password),
             Permissions = perms.Where(p => Convert.ToInt32(p.granted) == 1)
                                .Select(p => (string)p.slug).ToHashSet()
         };

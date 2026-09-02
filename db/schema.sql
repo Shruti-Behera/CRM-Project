@@ -121,6 +121,7 @@ CREATE TABLE users (
   status        VARCHAR(60) NOT NULL DEFAULT 'Active' CHECK (status IN ('Active','Inactive')),
   pref_sound    SMALLINT NOT NULL DEFAULT 1,   -- notification sound on/off
   pref_desktop  SMALLINT NOT NULL DEFAULT 1,   -- browser desktop notifications on/off
+  must_change_password SMALLINT NOT NULL DEFAULT 0,  -- 1 = force a reset on next sign-in (bulk-imported users)
   last_login_at TIMESTAMP NULL,
   created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
