@@ -5,6 +5,7 @@ import { Loading } from "./components/Bits.jsx";
 import Login from "./pages/Login.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
 import ForcePassword from "./pages/ForcePassword.jsx";
+import { allowedSegments, homePath } from "./lib/segments.js";
 import Shell from "./components/Shell.jsx";
 import BankingDashboard from "./pages/BankingDashboard.jsx";
 import Accounts from "./pages/Accounts.jsx";
@@ -68,53 +69,60 @@ export default function App() {
   // the backend RequireLevel(2) gate so it is not merely a hidden menu.
   const mastersOk = (user?.level ?? 99) <= 2;
 
+  // Department-based module visibility. seg() renders a page only if the user's
+  // department is allowed that segment, otherwise bounces them to their own home
+  // workspace — mirroring the backend so hidden modules can't be opened by URL.
+  const segs = allowedSegments(user);
+  const home = homePath(user);
+  const seg = (s, el) => (segs.has(s) ? el : <Navigate to={home} replace />);
+
   return (
     <NotificationsProvider>
     <Shell>
       <Routes>
-        <Route path="/" element={<Navigate to="/banking" replace />} />
+        <Route path="/" element={<Navigate to={home} replace />} />
         <Route path="/notifications" element={<Notifications />} />
-        <Route path="/login" element={<Navigate to="/banking" replace />} />
+        <Route path="/login" element={<Navigate to={home} replace />} />
         <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/banking" element={<BankingDashboard />} />
-        <Route path="/banking/accounts" element={<Accounts />} />
-        <Route path="/banking/accounts/:id" element={<AccountDetail />} />
-        <Route path="/banking/board" element={<PipelineBoard />} />
-        <Route path="/banking/opportunities" element={<Opportunities />} />
+        <Route path="/banking" element={seg('banking', <BankingDashboard />)} />
+        <Route path="/banking/accounts" element={seg('banking', <Accounts />)} />
+        <Route path="/banking/accounts/:id" element={seg('banking', <AccountDetail />)} />
+        <Route path="/banking/board" element={seg('banking', <PipelineBoard />)} />
+        <Route path="/banking/opportunities" element={seg('banking', <Opportunities />)} />
         <Route
           path="/banking/opportunities/:id"
-          element={<OpportunityDetail />}
+          element={seg('banking', <OpportunityDetail />)}
         />
-        <Route path="/banking/mandates" element={<Mandates />} />
-        <Route path="/banking/mandates/:id" element={<MandateDetail />} />
-        <Route path="/banking/closed" element={<ClosedProjects />} />
-        <Route path="/banking/deal-meetings" element={<DealMeetings />} />
-        <Route path="/banking/reports" element={<BankingReports />} />
-        <Route path="/institutional" element={<InstitutionalDashboard />} />
-        <Route path="/institutional/movement" element={<DailyMovement />} />
-        <Route path="/institutional/clients" element={<Institutions />} />
+        <Route path="/banking/mandates" element={seg('banking', <Mandates />)} />
+        <Route path="/banking/mandates/:id" element={seg('banking', <MandateDetail />)} />
+        <Route path="/banking/closed" element={seg('banking', <ClosedProjects />)} />
+        <Route path="/banking/deal-meetings" element={seg('banking', <DealMeetings />)} />
+        <Route path="/banking/reports" element={seg('banking', <BankingReports />)} />
+        <Route path="/institutional" element={seg('institutional', <InstitutionalDashboard />)} />
+        <Route path="/institutional/movement" element={seg('institutional', <DailyMovement />)} />
+        <Route path="/institutional/clients" element={seg('institutional', <Institutions />)} />
         <Route
           path="/institutional/clients/new"
-          element={<InstitutionForm />}
+          element={seg('institutional', <InstitutionForm />)}
         />
         <Route
           path="/institutional/clients/:id/edit"
-          element={<InstitutionForm />}
+          element={seg('institutional', <InstitutionForm />)}
         />
-        <Route path="/institutional/reports" element={<Reports />} />
-        <Route path="/institutional/brokerage" element={<Brokerage />} />
-        <Route path="/internal" element={<InternalDashboard />} />
-        <Route path="/internal/my-day" element={<MyDay />} />
-        <Route path="/internal/assignments" element={<Assignments />} />
-        <Route path="/internal/assignments/new" element={<AssignmentForm />} />
-        <Route path="/internal/assignments/:id" element={<AssignmentDetail />} />
-        <Route path="/internal/kanban" element={<Kanban />} />
-        <Route path="/internal/workload" element={<Workload />} />
-        <Route path="/internal/timelog" element={<TimeLog />} />
-        <Route path="/internal/meetings" element={<Meetings />} />
-        <Route path="/internal/calendar" element={<CalendarPage />} />
-        <Route path="/internal/emails" element={<Emails />} />
-        <Route path="/internal/work-approvals" element={<WorkApprovals />} />
+        <Route path="/institutional/reports" element={seg('institutional', <Reports />)} />
+        <Route path="/institutional/brokerage" element={seg('institutional', <Brokerage />)} />
+        <Route path="/internal" element={seg('internal', <InternalDashboard />)} />
+        <Route path="/internal/my-day" element={seg('internal', <MyDay />)} />
+        <Route path="/internal/assignments" element={seg('internal', <Assignments />)} />
+        <Route path="/internal/assignments/new" element={seg('internal', <AssignmentForm />)} />
+        <Route path="/internal/assignments/:id" element={seg('internal', <AssignmentDetail />)} />
+        <Route path="/internal/kanban" element={seg('internal', <Kanban />)} />
+        <Route path="/internal/workload" element={seg('internal', <Workload />)} />
+        <Route path="/internal/timelog" element={seg('internal', <TimeLog />)} />
+        <Route path="/internal/meetings" element={seg('internal', <Meetings />)} />
+        <Route path="/internal/calendar" element={seg('internal', <CalendarPage />)} />
+        <Route path="/internal/emails" element={seg('internal', <Emails />)} />
+        <Route path="/internal/work-approvals" element={seg('internal', <WorkApprovals />)} />
         <Route path="/masters" element={mastersOk ? <Masters /> : <Navigate to="/" replace />} />
         <Route path="/users" element={mastersOk ? <Users /> : <Navigate to="/" replace />} />
         <Route path="/departments" element={mastersOk ? <Departments /> : <Navigate to="/" replace />} />

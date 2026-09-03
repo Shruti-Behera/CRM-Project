@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth.jsx';
 import { get, post } from '../lib/api.js';
 import { useNotifications, notificationPath } from '../lib/notifications.jsx';
 import { ini, Modal, ErrorNote } from './Bits.jsx';
+import { allowedSegments } from '../lib/segments.js';
 
 // The Master module is shared by every workspace — one definition, one set of
 // routes. It is appended to each workspace's sidebar so it works identically
@@ -72,12 +73,15 @@ export default function Shell({ children }) {
   const nav = useNavigate();
   // Only true workspace paths pick the workspace. Shared pages (Masters, etc.)
   // leave the current workspace untouched so Masters feels common to all three.
+  // Which top-level workspaces this user's department may see (Internal always).
+  const segs = allowedSegments(user);
+  const homeWs = ['banking', 'institutional', 'internal'].find(k => segs.has(k)) || 'internal';
   const wsFromPath = loc.pathname.startsWith('/institutional') ? 'institutional'
                    : loc.pathname.startsWith('/internal') ? 'internal'
                    : loc.pathname.startsWith('/banking') ? 'banking'
                    : SHARED_PREFIXES.some(p => loc.pathname.startsWith(p)) ? null
-                   : 'banking';
-  const [ws, setWs] = useState(wsFromPath || 'banking');
+                   : homeWs;
+  const [ws, setWs] = useState(wsFromPath && segs.has(wsFromPath) ? wsFromPath : homeWs);
   const [open, setOpen] = useState(false);        // mobile sidebar
   const [pwOpen, setPwOpen] = useState(false);     // change-password modal
   const [counts, setCounts] = useState({});
@@ -90,7 +94,7 @@ export default function Shell({ children }) {
   const { items: notifItems, unread, total: notifTotal, refresh: refreshNotif,
           loadMore: loadMoreNotif, markRead, markAll, remove: removeNotif, clearAll } = useNotifications();
 
-  useEffect(() => { if (wsFromPath) setWs(wsFromPath); }, [wsFromPath]);
+  useEffect(() => { if (wsFromPath && segs.has(wsFromPath)) setWs(wsFromPath); }, [wsFromPath]);
 
   useEffect(() => {
     const loadCounts = () => get('/nav-counts').then(setCounts).catch(() => {});
@@ -125,7 +129,7 @@ export default function Shell({ children }) {
 
         <div className="ws">
           <div className="eyebrow" style={{ color: '#8FA0C4', marginBottom: 6 }}>Workspace</div>
-          {Object.entries(NAV).filter(([, v]) => can(v.right)).map(([key, v]) => (
+          {Object.entries(NAV).filter(([key, v]) => can(v.right) && segs.has(key)).map(([key, v]) => (
             <button key={key} className={ws === key ? 'on' : ''} onClick={() => switchWs(key)}>
               <span className="ic">{v.icon}</span>
               <span>{v.label}<small>{v.hint}</small></span>

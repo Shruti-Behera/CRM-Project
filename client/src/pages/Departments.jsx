@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { get, post, put, del, patch } from '../lib/api.js';
+import { get, post, put, del } from '../lib/api.js';
 import { Card, Pill, Loading, Empty, ErrorNote, Modal } from '../components/Bits.jsx';
 import { useAuth } from '../lib/auth.jsx';
 import { downloadXLSX, readXLSX } from '../lib/xlsx.js';
+import { MAIN_MODULES, moduleLabel } from '../lib/segments.js';
 
 // Bulk-import columns = the same fields as the manual Add-department form.
-const IMPORT_COLS = ['code', 'name'];
+const IMPORT_COLS = ['code', 'name', 'main_module'];
 const stamp = () => new Date().toISOString().slice(0, 10);
 
 export default function Departments() {
@@ -25,15 +26,16 @@ export default function Departments() {
     return rows.filter(d => !s || `${d.name} ${d.code || ''}`.toLowerCase().includes(s));
   }, [rows, q]);
 
-  const openAdd = () => setForm({ _new: true, code: '', name: '' });
-  const openEdit = (d) => setForm({ _new: false, id: d.id, code: d.code || '', name: d.name });
+  const openAdd = () => setForm({ _new: true, code: '', name: '', main_module: '' });
+  const openEdit = (d) => setForm({ _new: false, id: d.id, code: d.code || '', name: d.name, main_module: d.main_module || '' });
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const save = async () => {
     if (!form.name.trim()) { setErr('A department name is needed'); return; }
+    if (!form.main_module) { setErr('Please select a Main Module for this department'); return; }
     setBusy(true);
     try {
-      const body = { name: form.name, code: form.code || undefined };
+      const body = { name: form.name, code: form.code || undefined, main_module: form.main_module };
       if (form._new) await post('/masters/departments', body);
       else await put(`/masters/departments/${form.id}`, body);
       setForm(null); setErr(''); load();
@@ -45,11 +47,6 @@ export default function Departments() {
     if (!window.confirm(`Delete ${d.name}?`)) return;
     try { await del(`/masters/departments/${d.id}`); load(); }
     catch (e) { setErr(e.message); }  // server explains if still in use
-  };
-
-  const toggle = async (d) => {
-    try { await patch(`/masters/departments/${d.id}/retire`, { active: Number(d.is_active) === 0 }); load(); }
-    catch (e) { setErr(e.message); }
   };
 
   /* ---- bulk import (same fields/rules as manual create) ---- */
@@ -67,12 +64,13 @@ export default function Departments() {
   };
 
   const downloadTemplate = () => {
-    const example = { code: 'FIN', name: 'Finance' };
+    const example = { code: 'FIN', name: 'Finance', main_module: 'internal' };
     const sheet = { name: 'Departments', headers: IMPORT_COLS, rows: [IMPORT_COLS.map(c => example[c] ?? '')] };
     const ref = {
       name: 'Reference', headers: ['Field', 'Notes'], rows: [
         ['name', 'required, must be unique (same rule as manual create)'],
-        ['code', 'optional, up to 12 characters']
+        ['code', 'optional, up to 12 characters'],
+        ['main_module', `required — one of: ${MAIN_MODULES.map(m => m.value).join(', ')} (or the full label, e.g. "${MAIN_MODULES[0].label}")`]
       ]
     };
     downloadXLSX(`ashika-departments-template-${stamp()}.xlsx`, [sheet, ref]);
@@ -126,16 +124,15 @@ export default function Departments() {
 
       <Card pad={false}>
         <table className="tbl">
-          <thead><tr><th>Code</th><th>Name</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
+          <thead><tr><th>Code</th><th>Name</th><th>Main module</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
           <tbody>
             {filtered.length ? filtered.map(d => (
               <tr key={d.id}>
                 <td className="mono" style={{ fontSize: 12 }}>{d.code || '—'}</td>
                 <td style={{ fontWeight: 500 }}>{d.name}</td>
-                <td><Pill kind={Number(d.is_active) === 0 ? 'p-hold' : 'p-done'}>{Number(d.is_active) === 0 ? 'Retired' : 'Active'}</Pill></td>
+                <td style={{ fontSize: 12.5 }}>{moduleLabel(d.main_module) || '—'}</td>
                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   {can('masters.edit') && <button className="btn" style={{ padding: '2px 8px' }} onClick={() => openEdit(d)}>Edit</button>}{' '}
-                  {can('masters.edit') && <button className="btn" style={{ padding: '2px 8px' }} onClick={() => toggle(d)}>{Number(d.is_active) === 0 ? 'Activate' : 'Retire'}</button>}{' '}
                   {can('masters.delete') && <button className="btn" style={{ padding: '2px 8px', color: 'var(--red)' }} onClick={() => remove(d)}>Delete</button>}
                 </td>
               </tr>
@@ -151,6 +148,13 @@ export default function Departments() {
           <div className="grid" style={{ gridTemplateColumns: '1fr 2fr' }}>
             <div><label>Code</label><input value={form.code} onChange={e => setF('code', e.target.value)} /></div>
             <div><label>Name</label><input value={form.name} onChange={e => setF('name', e.target.value)} /></div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label>Main module</label>
+              <select value={form.main_module} onChange={e => setF('main_module', e.target.value)}>
+                <option value="">— select —</option>
+                {MAIN_MODULES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </div>
           </div>
         </Modal>
       )}
@@ -167,9 +171,9 @@ export default function Departments() {
           {!impPreview && !impResult && (
             <div>
               <p style={{ fontSize: 13, marginTop: 0 }}>
-                Upload an <b>.xlsx</b> or <b>.csv</b> with one row per department. Columns: <b>code</b> and <b>name</b> —
-                the same fields as Add department. Name is required and must be unique. Every row is validated before
-                anything is created.
+                Upload an <b>.xlsx</b> or <b>.csv</b> with one row per department. Columns: <b>code</b>, <b>name</b> and
+                <b> main_module</b> — the same fields as Add department. Name is required and unique; main_module is
+                required (banking / institutional / internal, or the full label). Every row is validated first.
               </p>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <button className="btn" onClick={downloadTemplate}>Download template</button>
@@ -193,13 +197,14 @@ export default function Departments() {
               </div>
               <div style={{ maxHeight: 320, overflow: 'auto' }}>
                 <table className="tbl">
-                  <thead><tr><th>#</th><th>Code</th><th>Name</th><th>Result</th></tr></thead>
+                  <thead><tr><th>#</th><th>Code</th><th>Name</th><th>Module</th><th>Result</th></tr></thead>
                   <tbody>
                     {impPreview.rows.map((r, i) => (
                       <tr key={i} style={{ background: r.valid ? '' : '#FFF5F5' }}>
                         <td className="mono" style={{ fontSize: 11.5 }}>{r.row}</td>
                         <td className="mono" style={{ fontSize: 12 }}>{r.code || '—'}</td>
                         <td style={{ fontSize: 12.5 }}>{r.name || '—'}</td>
+                        <td style={{ fontSize: 12 }}>{r.module || '—'}</td>
                         <td style={{ fontSize: 12 }}>
                           {r.valid ? <Pill kind="p-done">Ready</Pill>
                             : <span style={{ color: 'var(--red)' }}>{r.errors.join('; ')}</span>}

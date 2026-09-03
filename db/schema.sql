@@ -75,9 +75,11 @@ CREATE TABLE departments (
   code       VARCHAR(12)  NULL,
   name       VARCHAR(80)  NOT NULL,
   head_user_id INTEGER NULL,
+  main_module VARCHAR(20) NULL,   -- banking | institutional | internal (the department's Main Module)
   is_active  SMALLINT   NOT NULL DEFAULT 1,
   created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT uq_dept_name UNIQUE (name)) ;
+  CONSTRAINT uq_dept_name UNIQUE (name),
+  CONSTRAINT ck_dept_module CHECK (main_module IS NULL OR main_module IN ('banking','institutional','internal'))) ;
 CREATE TABLE divisions (
   id        INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   code      VARCHAR(12) NULL,

@@ -182,9 +182,11 @@ public sealed class CurrentUser
     public int? DepartmentId { get; init; }
     public int? DivisionId { get; init; }
     public string? Department { get; init; }
+    public string? MainModule { get; init; }            // the department's Main Module: banking|institutional|internal
     public string? Division { get; init; }
     public HashSet<string> Permissions { get; init; } = [];
     public int MustChangePassword { get; init; }        // 1 = force a password reset on next sign-in
+    public HashSet<string> AllowedSegments { get; init; } = new();  // banking | institutional | internal
     public int[]? People { get; set; }                  // the reporting tree, null when scope is 'all'
 
     public bool Can(string slug) => Permissions.Contains(slug);
@@ -227,7 +229,7 @@ public static class Scope
         var u = await db.One("""
             SELECT u.id, u.employee_code, u.name, u.email, u.status,
                    u.department_id, u.division_id, u.must_change_password,
-                   r.level, r.scope, d.name AS department, dv.name AS division
+                   r.level, r.scope, d.name AS department, d.main_module, dv.name AS division
               FROM users u
               JOIN roles r ON r.id = u.role_id
               LEFT JOIN departments d ON d.id = u.department_id
@@ -263,8 +265,10 @@ public static class Scope
             DepartmentId = (int?)u.department_id,
             DivisionId = (int?)u.division_id,
             Department = (string?)u.department,
+            MainModule = (string?)u.main_module,
             Division = (string?)u.division,
             MustChangePassword = Convert.ToInt32(u.must_change_password),
+            AllowedSegments = SegmentsFor((string?)u.main_module, Convert.ToInt32(u.level)),
             Permissions = perms.Where(p => Convert.ToInt32(p.granted) == 1)
                                .Select(p => (string)p.slug).ToHashSet()
         };
@@ -343,6 +347,36 @@ public static class Scope
             EXISTS (SELECT 1 FROM assignment_assignees aa
                      WHERE aa.assignment_id = {alias}.id AND aa.user_id = ANY(@people))
             """, u.People ?? Array.Empty<int>(), null, u.DepartmentId, u.Id);
+    }
+
+    /* Department + level based module visibility (mirrors client/src/lib/segments.js).
+       Level 1 & 2 see all three modules. Everyone below is limited to the single
+       module their department is mapped to (departments.main_module); an unmapped
+       department falls back to Internal Work. Driven entirely by the stored
+       Main Module value — no hardcoded department names. */
+    public static HashSet<string> SegmentsFor(string? mainModule, int level)
+    {
+        if (level <= 2) return new() { "banking", "institutional", "internal" };
+        var m = (mainModule ?? "").Trim().ToLowerInvariant();
+        if (m == "banking") return new() { "banking" };
+        if (m == "institutional") return new() { "institutional" };
+        return new() { "internal" };
+    }
+
+    /* The segment an API path belongs to, or null for shared paths (auth, Masters,
+       Users, notifications, search, settings, nav-counts, meetings, assignees,
+       attachments) that every signed-in user may reach. Banking, institutional and
+       internal module endpoints are each gated to their segment. */
+    public static string? SegmentForPath(string path)
+    {
+        bool P(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        if (P("/api/accounts") || P("/api/opportunities") || P("/api/mandates")
+            || P("/api/banking") || P("/api/lookups") || P("/api/dashboards/banking")) return "banking";
+        if (P("/api/institutions") || P("/api/brokerage") || P("/api/research-reports")
+            || P("/api/dashboards/institutional")) return "institutional";
+        if (P("/api/assignments") || P("/api/work-approvals") || P("/api/time-logs")
+            || P("/api/emails") || P("/api/dashboards/internal")) return "internal";
+        return null;
     }
 }
 

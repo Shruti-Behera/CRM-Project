@@ -61,6 +61,7 @@ public static class AuthEndpoints
           level = u.Level,
           scope = u.ScopeKind,
           department = u.Department ?? "",
+          main_module = u.MainModule ?? "",
           division = u.Division ?? "",
           must_change_password = u.MustChangePassword,
           permissions = u.Permissions?.ToArray() ?? Array.Empty<string>()
@@ -684,7 +685,7 @@ public static class MasterEndpoints
 
     private static readonly Dictionary<string, Master> Masters = new()
     {
-        ["departments"] = new("departments", ["code", "name", "head_user_id"],
+        ["departments"] = new("departments", ["code", "name", "head_user_id", "main_module"],
             [("users", "department_id"), ("assignments", "department_id")]),
         ["divisions"] = new("divisions", ["code", "name", "head_user_id"],
             [("users", "division_id"), ("opportunities", "division_id"), ("mandates", "division_id")]),
@@ -802,8 +803,17 @@ public static class MasterEndpoints
             }
 
             var results = new List<object>();
-            var toInsert = new List<(string? code, string name, int? head)>();
+            var toInsert = new List<(string? code, string name, int? head, string module)>();
             var seenNames = new HashSet<string>(StringComparer.Ordinal);
+
+            static string NormModule(string s) => s.Trim().ToLowerInvariant() switch
+            {
+                "banking" or "investment banking & merchant banking"
+                    or "investment banking and merchant banking" => "banking",
+                "institutional" or "institutional business" => "institutional",
+                "internal" or "internal work" => "internal",
+                _ => ""
+            };
 
             for (int i = 0; i < rows.Count; i++)
             {
@@ -831,9 +841,15 @@ public static class MasterEndpoints
                 else if (headCode.Length > 0) { if (usersByCode.TryGetValue(headCode, out var h1)) head = h1; else errors.Add($"Head '{headCode}' not found"); }
                 else if (headEmail.Length > 0) { if (usersByEmail.TryGetValue(headEmail, out var h2)) head = h2; else errors.Add($"Head '{headEmail}' not found"); }
 
+                // main module — required; accept the code or the display label.
+                var mmRaw = Cell(r, "main_module", "module");
+                var module = NormModule(mmRaw);
+                if (mmRaw.Length == 0) errors.Add("Main module is required");
+                else if (module.Length == 0) errors.Add($"Unknown main module '{mmRaw}'");
+
                 var valid = errors.Count == 0;
-                if (valid) toInsert.Add((code.Length > 0 ? code : null, name, head));
-                results.Add(new { row = i + 2, code, name, valid, errors });
+                if (valid) toInsert.Add((code.Length > 0 ? code : null, name, head, module));
+                results.Add(new { row = i + 2, code, name, module, valid, errors });
             }
 
             var validCount = toInsert.Count;
@@ -849,8 +865,8 @@ public static class MasterEndpoints
                     foreach (var d in toInsert)
                     {
                         await conn.ExecuteAsync(
-                            "INSERT INTO departments (code, name, head_user_id) VALUES (@code, @name, @head)",
-                            new { d.code, d.name, head = d.head }, tx);
+                            "INSERT INTO departments (code, name, head_user_id, main_module) VALUES (@code, @name, @head, @module)",
+                            new { d.code, d.name, head = d.head, module = d.module }, tx);
                         created++;
                     }
                     return 0;

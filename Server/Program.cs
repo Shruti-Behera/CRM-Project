@@ -134,6 +134,13 @@ app.Use(async (ctx, next) =>
             app.Logger.LogError(ex, "Failed to load user scope for ID {UserId}", userId);
             throw AppException.Unauthorised("Unable to resolve user session permissions");
         }
+
+        // Department-based module visibility: block API calls into a business
+        // segment (banking / institutional) the user's department can't access,
+        // so hidden modules cannot be reached by direct URL or API call.
+        var seg = Scope.SegmentForPath(path);
+        if (seg is not null && ctx.Items["user"] is CurrentUser cu && !cu.AllowedSegments.Contains(seg))
+            throw AppException.Forbidden("This module is not available for your department");
     }
     await next();
 });
