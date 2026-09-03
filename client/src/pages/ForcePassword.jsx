@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { post } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
 
 /* Shown in place of the app when a user's account is flagged
    must_change_password (bulk-imported users signing in for the first time).
@@ -12,6 +13,7 @@ export default function ForcePassword({ user }) {
   const [conf, setConf] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const { signOut } = useAuth();
 
   const submit = async (e) => {
     e.preventDefault();
@@ -45,6 +47,11 @@ export default function ForcePassword({ user }) {
         <input style={field} type="password" value={conf} onChange={e => setConf(e.target.value)} />
         <button className="btn primary" type="submit" disabled={busy} style={{ width: '100%', marginTop: 6 }}>
           {busy ? 'Saving…' : 'Set password & continue'}
+        </button>
+        <button type="button" onClick={signOut} disabled={busy}
+          style={{ width: '100%', marginTop: 10, background: 'none', border: 'none',
+            color: 'var(--muted)', fontSize: 13, cursor: 'pointer' }}>
+          Back to login
         </button>
       </form>
     </div>

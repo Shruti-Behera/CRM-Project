@@ -110,6 +110,16 @@ export default function Shell({ children }) {
     return () => clearTimeout(t);
   }, [q]);
 
+  // Close the header dropdowns (profile / notifications) on any click outside
+  // them. Clicks inside a dropdown, and on its trigger button, call
+  // stopPropagation, so they never reach this document listener.
+  useEffect(() => {
+    if (!menu) return;
+    const closeMenu = () => setMenu(null);
+    document.addEventListener('click', closeMenu);
+    return () => document.removeEventListener('click', closeMenu);
+  }, [menu]);
+
   const switchWs = (key) => { setWs(key); setOpen(false); nav(NAV[key].home); };
   const goResult = (r) => { setQ(''); setResults([]); nav((SEARCH_PATH[r.kind] || (() => '/'))(r)); };
   const openNotif = (n) => {

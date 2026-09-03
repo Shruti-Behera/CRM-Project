@@ -252,6 +252,7 @@ export default function Users() {
       <div style={{ height: 14 }} />
 
       <Card pad={false}>
+        <div style={{ overflowX: 'auto' }}>
         <table className="tbl">
           <thead><tr>
             <th>Employee ID</th><th>Name</th><th>Email</th><th>Department</th><th>Designation</th>
@@ -260,15 +261,15 @@ export default function Users() {
           <tbody>
             {filtered.length ? filtered.map(u => (
               <tr key={u.id}>
-                <td className="mono" style={{ fontSize: 12 }}>{u.employee_code}</td>
-                <td><Avatar name={u.name} size={22} tone={levelAvTone(u.level)} /> <span style={{ fontWeight: 500 }}>{u.name}</span>
+                <td className="mono" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{u.employee_code}</td>
+                <td style={{ whiteSpace: 'nowrap' }}><Avatar name={u.name} size={22} tone={levelAvTone(u.level)} /> <span style={{ fontWeight: 500 }}>{u.name}</span>
                   {u.id === user?.id && <span className="tag" style={{ marginLeft: 4 }}>you</span>}</td>
-                <td style={{ fontSize: 12.5 }}>{u.email}</td>
-                <td style={{ fontSize: 12.5 }}>{u.department || '—'}</td>
-                <td style={{ fontSize: 12.5 }}>{u.designation || '—'}</td>
-                <td style={{ fontSize: 12.5 }}>{u.manager || '—'}</td>
+                <td style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>{u.email}</td>
+                <td style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>{u.department || '—'}</td>
+                <td style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>{u.designation || '—'}</td>
+                <td style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>{u.manager || '—'}</td>
                 <td><Pill kind={levelTone(u.level)}>Level {u.level}</Pill></td>
-                <td className="mono" style={{ fontSize: 11.5 }}>{u.overrides > 0
+                <td className="mono" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>{u.overrides > 0
                   ? <span className="tag">custom</span> : 'role default'}</td>
                 <td><Pill kind={u.status === 'Active' ? 'p-done' : 'p-hold'}>{u.status}</Pill></td>
                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -286,6 +287,7 @@ export default function Users() {
             )) : <Empty cols={10}>No users match.</Empty>}
           </tbody>
         </table>
+        </div>
         <div className="eyebrow" style={{ padding: '10px 15px' }}>{filtered.length} of {rows.length} users</div>
       </Card>
 
