@@ -16,7 +16,6 @@ public static class CreateAdmin
 {
     public static async Task Run()
     {
-        AshikaWdm.Infrastructure.DotEnv.Load();
         var cfg = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile("appsettings.json")
@@ -25,7 +24,8 @@ public static class CreateAdmin
             .Build();
 
         await using var source = NpgsqlDataSource.Create(
-            AshikaWdm.Infrastructure.AppConfig.DbConnectionString(cfg));
+            cfg.GetConnectionString("Db")
+            ?? throw new InvalidOperationException("ConnectionStrings:Db is not configured"));
         await using var conn = await source.OpenConnectionAsync();
 
         try

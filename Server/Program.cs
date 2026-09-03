@@ -14,11 +14,6 @@ using AshikaWdm.Endpoints;
 using AshikaWdm.Infrastructure;
 using Npgsql;
 
-// Load a local .env (if present) into the environment before anything reads
-// configuration. On the server, real environment variables are already set and
-// take precedence, so no code changes are needed to move from local to live.
-AshikaWdm.Infrastructure.DotEnv.Load();
-
 if (args.Contains("create-admin"))
 {
     await AshikaWdm.Tools.CreateAdmin.Run();
@@ -28,7 +23,8 @@ if (args.Contains("create-admin"))
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton(sp =>
-    NpgsqlDataSource.Create(AshikaWdm.Infrastructure.AppConfig.DbConnectionString(builder.Configuration)));
+    NpgsqlDataSource.Create(builder.Configuration.GetConnectionString("Db")
+        ?? throw new InvalidOperationException("ConnectionStrings:Db is not configured")));
 builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<Tokens>();
 builder.Services.AddSingleton<Mailer>();
