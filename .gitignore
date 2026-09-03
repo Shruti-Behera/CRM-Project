@@ -1,0 +1,36 @@
+# =====================================================================
+#  Never commit secrets or build artifacts.
+# =====================================================================
+
+# --- Environment / secrets ---
+.env
+*.env
+**/.env
+**/.env.*
+# keep the templates in the repo
+!.env.example
+!**/.env.example
+# Vite local overrides
+client/.env.local
+client/.env.*.local
+
+# --- .NET build output ---
+bin/
+obj/
+Server/bin/
+Server/obj/
+
+# --- Node / frontend build ---
+node_modules/
+client/node_modules/
+client/dist/
+
+# --- Uploaded files / local storage ---
+Server/storage/uploads/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+*.user
+.vs/
+.vscode/
