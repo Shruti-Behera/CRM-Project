@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { get, post } from '../lib/api.js';
 import { Card, ErrorNote } from '../components/Bits.jsx';
@@ -183,29 +183,71 @@ const L = ({ label, children, full }) => (
   </div>
 );
 
-// A reliable, always-clickable multi-select: one checkbox chip per person.
-export const AssigneePicker = ({ users, selected, onToggle }) => (
-  <div style={{
-    display: 'flex', flexWrap: 'wrap', gap: 8, border: '1px solid var(--line)',
-    borderRadius: 6, padding: 10, maxHeight: 168, overflowY: 'auto', background: '#fff'
-  }}>
-    {users.length ? users.map(u => {
-      const on = selected.includes(u.id);
-      return (
-        <label key={u.id} style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0, cursor: 'pointer',
-          fontSize: 12.5, fontWeight: 400, textTransform: 'none', letterSpacing: 0,
-          color: on ? 'var(--navy)' : 'var(--ink)', background: on ? 'var(--tint)' : '#fff',
-          border: '1px solid', borderColor: on ? 'var(--navy)' : 'var(--line)',
-          borderRadius: 20, padding: '3px 11px'
-        }}>
-          <input type="checkbox" checked={on} onChange={() => onToggle(u.id)} style={{ width: 'auto', margin: 0 }} />
-          {u.name}{u.department ? <span style={{ color: 'var(--muted)' }}> · {u.department}</span> : null}
-        </label>
-      );
-    }) : <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>No assignable people found.</span>}
-  </div>
-);
+// Searchable multi-select dropdown: a collapsed box that opens a panel with a
+// name search and the full employee list. Anyone can be assigned to anyone.
+export const AssigneePicker = ({ users, selected, onToggle }) => {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const term = q.trim().toLowerCase();
+  const shown = term
+    ? users.filter(u => `${u.name} ${u.department || ''} ${u.employee_code || ''}`.toLowerCase().includes(term))
+    : users;
+  const chosen = users.filter(u => selected.includes(u.id));
+
+  return (
+    <div ref={boxRef} style={{ position: 'relative' }}>
+      {/* the collapsed control */}
+      <div onClick={() => setOpen(o => !o)} style={{
+        border: '1px solid var(--line)', borderRadius: 6, background: '#fff', cursor: 'pointer',
+        minHeight: 38, padding: '5px 10px', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center'
+      }}>
+        {chosen.length === 0 && <span style={{ color: 'var(--muted)', fontSize: 13 }}>Select employees…</span>}
+        {chosen.map(u => (
+          <span key={u.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5,
+            background: 'var(--tint)', border: '1px solid var(--navy)', color: 'var(--navy)', borderRadius: 20, padding: '2px 9px' }}>
+            {u.name}
+            <span role="button" onClick={(e) => { e.stopPropagation(); onToggle(u.id); }}
+              style={{ cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</span>
+          </span>
+        ))}
+        <span style={{ marginLeft: 'auto', color: 'var(--muted)' }}>▾</span>
+      </div>
+
+      {/* the dropdown panel */}
+      {open && (
+        <div style={{ position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0, marginTop: 4,
+          border: '1px solid var(--line)', borderRadius: 6, background: '#fff', boxShadow: '0 10px 30px rgba(10,20,50,.15)' }}>
+          <input autoFocus placeholder="Search employee by name…" value={q} onChange={e => setQ(e.target.value)}
+            onClick={e => e.stopPropagation()}
+            style={{ width: '100%', border: 'none', borderBottom: '1px solid var(--line)', borderRadius: 0 }} />
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            {shown.length ? shown.map(u => {
+              const on = selected.includes(u.id);
+              return (
+                <div key={u.id} onClick={() => onToggle(u.id)} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer',
+                  fontSize: 12.5, background: on ? 'var(--tint)' : '#fff', borderBottom: '1px solid #F2F4F8' }}>
+                  <input type="checkbox" readOnly checked={on} style={{ width: 'auto', margin: 0 }} />
+                  <span style={{ fontWeight: on ? 500 : 400 }}>{u.name}</span>
+                  {u.department && <span style={{ color: 'var(--muted)' }}>· {u.department}</span>}
+                </div>
+              );
+            }) : <div style={{ padding: 10, fontSize: 12.5, color: 'var(--muted)' }}>No employees match.</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const Select = ({ value, onChange, opts, placeholder }) => (
   <select value={value} onChange={onChange}>

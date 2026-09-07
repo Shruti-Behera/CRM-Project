@@ -23,13 +23,10 @@ public static class AssignmentEndpoints
        list and the assignment rules can never drift apart. */
     private static async Task<int[]> AssignableIds(Db db, CurrentUser u)
     {
-        if (u.Level == 1)
-            return (await db.Q("SELECT id FROM users WHERE status = 'Active' AND id <> @me",
-                    new { me = u.Id }))
-                   .Select(r => (int)r.id).ToArray();
-        var people = u.People ?? Array.Empty<int>();
-        return (await db.Q("SELECT id FROM users WHERE status = 'Active' AND id = ANY(@people) AND id <> @me",
-                new { people, me = u.Id }))
+        // Anyone can assign work to anyone: the "Assigned to" list is every
+        // active employee. (Assignment visibility is handled separately by
+        // Scope.Assignment and is unchanged.)
+        return (await db.Q("SELECT id FROM users WHERE status = 'Active'"))
                .Select(r => (int)r.id).ToArray();
     }
 
@@ -42,7 +39,7 @@ public static class AssignmentEndpoints
         if (distinct.Length == 0) throw AppException.BadRequest("Pick at least one person to assign this to");
         var allowed = (await AssignableIds(db, u)).ToHashSet();
         if (distinct.Any(x => !allowed.Contains(x)))
-            throw AppException.Forbidden("You can only assign work to people within your own reporting hierarchy");
+            throw AppException.BadRequest("Assignees must be active employees");
         return distinct;
     }
 
