@@ -326,21 +326,22 @@ public static class Scope
     /// Assignment visibility, strictly downward through the reporting tree
     /// (users.manager_id). Keyed on LEVEL, not the role's data-scope, so only the
     /// Super Admin ever sees the whole organisation:
-    ///   level 1  Super Admin                       — every assignment
-    ///   level 2+ Management, Head/HOD, Manager,     — own assignments plus every
-    ///            Executive                            assignment owned by someone in
-    ///                                                 their DOWNWARD reporting tree.
+    ///   level 1-2 Super Admin, Management            — every assignment
+    ///   level 3+  Head/HOD, Manager, Executive       — own assignments plus every
+    ///                                                  assignment owned by someone in
+    ///                                                  their DOWNWARD reporting tree.
     /// An assignment is "owned" by each of its assignees (assignment_assignees), so
     /// a task shared with several people is visible to each of them and to their
     /// respective managers. u.People is self + all direct/indirect reports and never
-    /// contains anyone above the user, so a Manager cannot see their Head/HOD's,
-    /// Management's or the Super Admin's work, and an Executive — who has no reports
-    /// — sees only their own. Visibility follows manager_id and assignment ownership
-    /// alone: no department, division, assigned_by or watcher widens it.
+    /// contains anyone above the user, so a Manager cannot see their Head/HOD's or
+    /// Management's work, and an Executive — who has no reports — sees only their own.
+    /// Visibility follows manager_id and assignment ownership alone: no department,
+    /// division, assigned_by or watcher widens it.
     /// </summary>
     public static ScopeSql Assignment(CurrentUser u, string alias = "a")
     {
-        if (u.Level == 1)
+        // Level 1 (Super Admin) and Level 2 (Management) see every assignment.
+        if (u.Level <= 2)
             return new("1=1", Array.Empty<int>(), null, null, u.Id);
 
         return new($"""
